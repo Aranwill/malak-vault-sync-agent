@@ -9,6 +9,7 @@ from malak_vault_sync.audit import (
     audit_report_payload,
     build_audit_report,
     serialize_audit_report_json,
+    serialize_audit_report_markdown,
 )
 from malak_vault_sync.evidence import (
     CommitRange,
@@ -409,3 +410,115 @@ def test_audit_report_payload_sanitizes_repository_urls() -> None:
     assert "secret" not in origin_url
     assert "user:" not in origin_url
     assert "[REDACTED]" in origin_url
+
+def test_serialized_audit_report_markdown_is_deterministic() -> None:
+    report = build_audit_report(
+        evidence=_make_evidence(),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="a" * 64,
+        ),
+        candidates=(),
+        findings=(),
+    )
+
+    first = serialize_audit_report_markdown(report)
+    second = serialize_audit_report_markdown(report)
+
+    assert first == second
+    assert first.endswith("\n")
+
+
+def test_serialized_audit_report_markdown_contains_required_sections() -> None:
+    report = build_audit_report(
+        evidence=_make_evidence(
+            changed_files=(
+                ChangedFile(
+                    status="M",
+                    path="README.md",
+                ),
+            ),
+        ),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="b" * 64,
+        ),
+        candidates=(),
+        findings=(
+            ValidationFinding(
+                severity="warning",
+                code="TEST_WARNING",
+                message="Test warning.",
+                path="README.md",
+            ),
+        ),
+    )
+
+    markdown = serialize_audit_report_markdown(report)
+
+    assert "# Vault Synchronization Audit Report" in markdown
+    assert "## Execution Summary" in markdown
+    assert "## Repositories Inspected" in markdown
+    assert "## Commit Range" in markdown
+    assert "## Changed Files" in markdown
+    assert "## Document Candidates" in markdown
+    assert "## Validation Findings" in markdown
+    assert "## Evidence Reference" in markdown
+    assert "## Conclusion" in markdown
+    assert "- `M` — `README.md`" in markdown
+    assert "**warning** `TEST_WARNING`" in markdown
+    assert "`pass_with_findings`" in markdown
+
+
+def test_serialized_audit_report_markdown_represents_empty_lists() -> None:
+    report = build_audit_report(
+        evidence=_make_evidence(),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="c" * 64,
+        ),
+        candidates=(),
+        findings=(),
+    )
+
+    markdown = serialize_audit_report_markdown(report)
+
+    assert markdown.count("None.") == 3
+
+
+def test_serialized_audit_report_markdown_uses_sanitized_origin() -> None:
+    evidence = _make_evidence()
+
+    source_snapshot = RepositorySnapshot(
+        repository_path=evidence.source_snapshot.repository_path,
+        branch=evidence.source_snapshot.branch,
+        head=evidence.source_snapshot.head,
+        remote_head=evidence.source_snapshot.remote_head,
+        origin_url="https://user:secret@example.com/repository.git",
+        is_clean=evidence.source_snapshot.is_clean,
+    )
+
+    sanitized_evidence = EvidenceManifest(
+        schema_version=evidence.schema_version,
+        execution=evidence.execution,
+        source_snapshot=source_snapshot,
+        vault_snapshot=evidence.vault_snapshot,
+        commit_range=evidence.commit_range,
+        changed_files=evidence.changed_files,
+    )
+
+    report = build_audit_report(
+        evidence=sanitized_evidence,
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="d" * 64,
+        ),
+        candidates=(),
+        findings=(),
+    )
+
+    markdown = serialize_audit_report_markdown(report)
+
+    assert "secret" not in markdown
+    assert "user:" not in markdown
+    assert "[REDACTED]" in markdown

@@ -177,6 +177,113 @@ def serialize_audit_report_json(
         + "\n"
     )
 
+def serialize_audit_report_markdown(
+    report: AuditReport,
+) -> str:
+    """Serialize an audit report as deterministic Markdown."""
+
+    payload = audit_report_payload(report)
+
+    lines = [
+        "# Vault Synchronization Audit Report",
+        "",
+        "## Execution Summary",
+        "",
+        f"- Run ID: `{payload['execution']['run_id']}`",
+        f"- Generated at: `{payload['execution']['generated_at']}`",
+        f"- Mode: `{payload['execution']['mode']}`",
+        f"- Python: `{payload['execution']['python_version']}`",
+        f"- Platform: `{payload['execution']['platform']}`",
+        "",
+        "## Repositories Inspected",
+        "",
+    ]
+
+    for label in ("source", "vault"):
+        repository = payload["repositories"][label]
+        lines.extend(
+            [
+                f"### {label.title()}",
+                "",
+                f"- Path: `{repository['repository_path']}`",
+                f"- Branch: `{repository['branch']}`",
+                f"- HEAD: `{repository['head']}`",
+                f"- Remote HEAD: `{repository['remote_head']}`",
+                f"- Origin: `{repository['origin_url']}`",
+                f"- Clean working tree: `{str(repository['is_clean']).lower()}`",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Commit Range",
+            "",
+            f"- Base: `{payload['commit_range']['base_commit']}`",
+            f"- Head: `{payload['commit_range']['head_commit']}`",
+            "",
+            "## Changed Files",
+            "",
+        ]
+    )
+
+    lines.extend(
+        _markdown_changed_files(payload["changed_files"])
+    )
+
+    lines.extend(
+        [
+            "",
+            "## Document Candidates",
+            "",
+        ]
+    )
+
+    lines.extend(
+        _markdown_candidates(payload["candidates"])
+    )
+
+    lines.extend(
+        [
+            "",
+            "## Validation Findings",
+            "",
+        ]
+    )
+
+    lines.extend(
+        _markdown_findings(payload["findings"])
+    )
+
+    summary = payload["summary"]
+
+    lines.extend(
+        [
+            "",
+            "## Summary",
+            "",
+            f"- Repositories inspected: {summary['repositories_inspected']}",
+            f"- Changed files: {summary['changed_files']}",
+            f"- Document candidates: {summary['document_candidates']}",
+            f"- Validation findings: {summary['validation_findings']}",
+            f"- Info findings: {summary['info_findings']}",
+            f"- Warning findings: {summary['warning_findings']}",
+            f"- Error findings: {summary['error_findings']}",
+            "",
+            "## Evidence Reference",
+            "",
+            f"- Path: `{payload['evidence_reference']['path']}`",
+            f"- SHA-256: `{payload['evidence_reference']['sha256']}`",
+            "",
+            "## Conclusion",
+            "",
+            f"`{payload['conclusion']}`",
+            "",
+        ]
+    )
+
+    return "\n".join(lines)
+
 
 def _repository_payload(
     snapshot: Any,
@@ -219,6 +326,80 @@ def _finding_payload(
         "message": finding.message,
         "path": finding.path,
     }
+
+def _markdown_changed_files(
+    changed_files: list[dict[str, Any]],
+) -> list[str]:
+    if not changed_files:
+        return ["None."]
+
+    return [
+        f"- `{item['status']}` — `{item['path']}`"
+        for item in changed_files
+    ]
+
+
+def _markdown_candidates(
+    candidates: list[dict[str, Any]],
+) -> list[str]:
+    if not candidates:
+        return ["None."]
+
+    lines: list[str] = []
+
+    for candidate in candidates:
+        lines.extend(
+            [
+                f"### `{candidate['path']}`",
+                "",
+                f"- Priority: `{candidate['priority']}`",
+                f"- Disposition: `{candidate['disposition']}`",
+                "- Reasons:",
+            ]
+        )
+
+        reasons = candidate["reasons"]
+
+        if not reasons:
+            lines.append("  - None.")
+        else:
+            for reason in reasons:
+                lines.append(
+                    "  - "
+                    f"`{reason['rule_id']}` "
+                    f"(priority: `{reason['priority']}`)"
+                )
+
+        lines.append("")
+
+    if lines[-1] == "":
+        lines.pop()
+
+    return lines
+
+
+def _markdown_findings(
+    findings: list[dict[str, Any]],
+) -> list[str]:
+    if not findings:
+        return ["None."]
+
+    lines: list[str] = []
+
+    for finding in findings:
+        location = (
+            f" — `{finding['path']}`"
+            if finding["path"] is not None
+            else ""
+        )
+
+        lines.append(
+            f"- **{finding['severity']}** "
+            f"`{finding['code']}`{location}: "
+            f"{finding['message']}"
+        )
+
+    return lines
 
 
 def _build_summary(
