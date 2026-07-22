@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,7 +6,9 @@ import pytest
 from malak_vault_sync.audit import (
     AuditConclusion,
     EvidenceReference,
+    audit_report_payload,
     build_audit_report,
+    serialize_audit_report_json,
 )
 from malak_vault_sync.evidence import (
     CommitRange,
@@ -230,3 +233,179 @@ def test_report_rejects_invalid_schema_version() -> None:
             candidates=(),
             findings=(),
         )
+
+
+def test_audit_report_payload_has_stable_public_structure() -> None:
+    report = build_audit_report(
+        evidence=_make_evidence(
+            changed_files=(
+                ChangedFile(
+                    status="M",
+                    path="README.md",
+                ),
+            ),
+        ),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="f" * 64,
+        ),
+        candidates=(),
+        findings=(
+            ValidationFinding(
+                severity="warning",
+                code="TEST_WARNING",
+                message="Test warning.",
+                path="README.md",
+            ),
+        ),
+    )
+
+    payload = audit_report_payload(report)
+
+    assert payload["schema_version"] == 1
+    assert payload["execution"] == {
+        "run_id": "20260722T120000Z-aaaaaaaa-bbbbbbbb",
+        "generated_at": "2026-07-22T12:00:00Z",
+        "python_version": "3.12.0",
+        "platform": "win32",
+        "mode": "dry-run",
+    }
+    assert payload["repositories"]["source"]["branch"] == "main"
+    assert payload["repositories"]["vault"]["branch"] == "main"
+    assert payload["repositories"]["source"]["repository_path"] == "jarvis"
+    assert (
+        payload["repositories"]["vault"]["repository_path"]
+        == "malak-project-vault"
+    )
+    assert payload["commit_range"] == {
+        "base_commit": "b" * 40,
+        "head_commit": "c" * 40,
+    }
+    assert payload["changed_files"] == [
+        {
+            "status": "M",
+            "path": "README.md",
+        },
+    ]
+    assert payload["candidates"] == []
+    assert payload["findings"] == [
+        {
+            "severity": "warning",
+            "code": "TEST_WARNING",
+            "message": "Test warning.",
+            "path": "README.md",
+        },
+    ]
+    assert payload["summary"] == {
+        "repositories_inspected": 2,
+        "changed_files": 1,
+        "document_candidates": 0,
+        "validation_findings": 1,
+        "info_findings": 0,
+        "warning_findings": 1,
+        "error_findings": 0,
+    }
+    assert payload["conclusion"] == "pass_with_findings"
+    assert payload["evidence_reference"] == {
+        "path": "evidence/run-001",
+        "sha256": "f" * 64,
+    }
+
+
+def test_serialized_audit_report_json_is_deterministic() -> None:
+    report = build_audit_report(
+        evidence=_make_evidence(),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="a" * 64,
+        ),
+        candidates=(),
+        findings=(),
+    )
+
+    first = serialize_audit_report_json(report)
+    second = serialize_audit_report_json(report)
+
+    assert first == second
+    assert first.endswith("\n")
+    assert json.loads(first) == audit_report_payload(report)
+
+
+def test_serialized_audit_report_json_uses_sorted_keys() -> None:
+    report = build_audit_report(
+        evidence=_make_evidence(),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="a" * 64,
+        ),
+        candidates=(),
+        findings=(),
+    )
+
+    serialized = serialize_audit_report_json(report)
+    top_level_keys = list(json.loads(serialized))
+
+    assert top_level_keys == sorted(top_level_keys)
+
+
+def test_serialized_audit_report_json_preserves_unicode() -> None:
+    report = build_audit_report(
+        evidence=_make_evidence(),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="a" * 64,
+        ),
+        candidates=(),
+        findings=(
+            ValidationFinding(
+                severity="info",
+                code="TEST_UNICODE",
+                message="Validación determinista de Malāk.",
+            ),
+        ),
+    )
+
+    serialized = serialize_audit_report_json(report)
+
+    assert "Validación determinista de Malāk." in serialized
+    assert "\\u00f3" not in serialized
+
+
+def test_audit_report_payload_sanitizes_repository_urls() -> None:
+    evidence = _make_evidence()
+
+    source_snapshot = RepositorySnapshot(
+        repository_path=evidence.source_snapshot.repository_path,
+        branch=evidence.source_snapshot.branch,
+        head=evidence.source_snapshot.head,
+        remote_head=evidence.source_snapshot.remote_head,
+        origin_url="https://user:secret@example.com/repository.git",
+        is_clean=evidence.source_snapshot.is_clean,
+    )
+
+    sanitized_evidence = EvidenceManifest(
+        schema_version=evidence.schema_version,
+        execution=evidence.execution,
+        source_snapshot=source_snapshot,
+        vault_snapshot=evidence.vault_snapshot,
+        commit_range=evidence.commit_range,
+        changed_files=evidence.changed_files,
+    )
+
+    report = build_audit_report(
+        evidence=sanitized_evidence,
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="a" * 64,
+        ),
+        candidates=(),
+        findings=(),
+    )
+
+    origin_url = audit_report_payload(
+        report,
+    )["repositories"]["source"]["origin_url"]
+
+    assert "secret" not in origin_url
+    assert "user:" not in origin_url
+    assert "[REDACTED]" in origin_url
