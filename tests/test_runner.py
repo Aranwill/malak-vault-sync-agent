@@ -26,7 +26,7 @@ from malak_vault_sync.models import (
     StateConfig,
     VaultConfig,
 )
-from malak_vault_sync.runner import RunnerError, run_once
+from malak_vault_sync.runner import RunnerError, poll_runs,run_once
 from malak_vault_sync.state_store import SyncState
 from malak_vault_sync.execution_lock import ExecutionLockError
 
@@ -458,3 +458,139 @@ def test_run_once_rejects_existing_execution_lock(
     assert lock_path.read_text(
         encoding="utf-8",
     ) == "existing lock\n"
+
+def test_poll_runs_executes_run_once_repeatedly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    results = ["run-1", "run-2", "run-3"]
+    run_calls: list[AgentConfig] = []
+    sleep_calls: list[float] = []
+
+    def fake_run_once(
+        received_config: AgentConfig,
+    ):
+        run_calls.append(received_config)
+        return results[len(run_calls) - 1]
+
+    monkeypatch.setattr(
+        runner_module,
+        "run_once",
+        fake_run_once,
+    )
+
+    polled_results = poll_runs(
+        config,
+        interval_seconds=30,
+        should_stop=lambda: len(run_calls) == 3,
+        sleep=sleep_calls.append,
+    )
+
+    assert polled_results == tuple(results)
+    assert run_calls == [
+        config,
+        config,
+        config,
+    ]
+    assert sleep_calls == [
+        30,
+        30,
+    ]
+
+
+def test_poll_runs_stops_after_first_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    run_calls: list[AgentConfig] = []
+    sleep_calls: list[float] = []
+
+    def fake_run_once(received_config: AgentConfig):
+        run_calls.append(received_config)
+        return "single-result"
+
+    monkeypatch.setattr(
+        runner_module,
+        "run_once",
+        fake_run_once,
+    )
+
+    results = poll_runs(
+        config,
+        interval_seconds=60,
+        should_stop=lambda: True,
+        sleep=sleep_calls.append,
+    )
+
+    assert results == ("single-result",)
+    assert run_calls == [config]
+    assert sleep_calls == []
+
+
+def test_poll_runs_propagates_runner_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    sleep_calls: list[float] = []
+
+    def fail_run_once(received_config: AgentConfig):
+        del received_config
+        raise RunnerError("simulated runner failure")
+
+    monkeypatch.setattr(
+        runner_module,
+        "run_once",
+        fail_run_once,
+    )
+
+    with pytest.raises(
+        RunnerError,
+        match="simulated runner failure",
+    ):
+        poll_runs(
+            config,
+            interval_seconds=10,
+            should_stop=lambda: False,
+            sleep=sleep_calls.append,
+        )
+
+    assert sleep_calls == []
+
+
+@pytest.mark.parametrize(
+    "interval_seconds",
+    [
+        0,
+        -1,
+        True,
+        False,
+    ],
+)
+def test_poll_runs_rejects_invalid_interval(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    interval_seconds: float,
+) -> None:
+    config = _make_config(tmp_path)
+
+    monkeypatch.setattr(
+        runner_module,
+        "run_once",
+        lambda received_config: pytest.fail(
+            "run_once must not execute with an invalid interval."
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Polling interval",
+    ):
+        poll_runs(
+            config,
+            interval_seconds=interval_seconds,
+            should_stop=lambda: True,
+            sleep=lambda seconds: None,
+        )

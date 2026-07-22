@@ -34,6 +34,12 @@ from malak_vault_sync.validators import (
     validate_relative_links,
     validate_yaml,
 )
+from collections.abc import Callable
+from typing import TypeVar
+
+from malak_vault_sync.polling import poll
+
+SleepCallable = Callable[[float], None]
 
 
 class RunnerError(RuntimeError):
@@ -66,6 +72,22 @@ def run_once(
 
     with execution_lock(lock_path):
         return _run_once_unlocked(config)
+
+def poll_runs(
+    config: AgentConfig,
+    *,
+    interval_seconds: float,
+    should_stop: Callable[[], bool],
+    sleep: SleepCallable,
+) -> tuple[RunResult, ...]:
+    """Execute supervised runs through deterministic external polling."""
+
+    return poll(
+        lambda: run_once(config),
+        interval_seconds=interval_seconds,
+        should_stop=should_stop,
+        sleep=sleep,
+    )
 
 
 def _run_once_unlocked(
