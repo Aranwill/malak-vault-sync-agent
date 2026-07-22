@@ -1,0 +1,33 @@
+schema_version: 1
+mode: dry-run
+
+source:
+  repository: Aranwill/jarvis
+  local_path: D:/Ollama/jarvis
+  remote: origin
+  branch: main
+  fetch: false
+
+vault:
+  repository: Aranwill/malak-project-vault
+  local_path: D:/Ollama/malak-project-vault
+  branch: main
+
+state:
+  path: var/state/sync-state.json
+
+output:
+  evidence_dir: var/evidence
+  report_dir: var/reports
+
+limits:
+  max_changed_files: 200
+  max_evidence_bytes: 10485760
+  max_file_bytes: 1048576
+  command_timeout_seconds: 60
+
+security:
+  require_clean_source_worktree: true
+  require_clean_vault_worktree: true
+  follow_symlinks: false
+  include_file_contents: false
