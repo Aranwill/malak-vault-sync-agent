@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 import pytest
 
@@ -34,7 +34,7 @@ from malak_vault_sync.execution_lock import ExecutionLockError
 SOURCE_HEAD = "a" * 40
 BASE_COMMIT = "b" * 40
 VAULT_HEAD = "c" * 40
-RUN_ID = "20260722T120000Z-aaaaaaaa-bbbbbbbb"
+RUN_ID = "20260722T120000Z_aaaaaaaa_bbbbbbbb"
 
 
 def _make_config(tmp_path: Path) -> AgentConfig:

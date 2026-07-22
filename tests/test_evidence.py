@@ -12,6 +12,7 @@ from malak_vault_sync.evidence import (
     build_run_id,
     sanitize_text,
     sha256_file,
+    validate_run_id,
     write_evidence_package,
 )
 from malak_vault_sync.git_inspector import (
@@ -103,6 +104,35 @@ def test_build_run_id_is_deterministic() -> None:
     assert run_id == (
         "20260722T193000Z_aaaaaaaa_bbbbbbbb"
     )
+
+
+def test_build_run_id_matches_canonical_validation_contract() -> None:
+    run_id = build_run_id(
+        SOURCE_COMMIT,
+        VAULT_COMMIT,
+        generated_at=GENERATED_AT,
+    )
+
+    assert run_id == "20260722T193000Z_aaaaaaaa_bbbbbbbb"
+    assert validate_run_id(run_id) == run_id
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "20260722T193000Z-aaaaaaaa-bbbbbbbb",
+        "invalid",
+        "",
+    ],
+)
+def test_validate_run_id_rejects_noncanonical_values(
+    run_id: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="Invalid run_id",
+    ):
+        validate_run_id(run_id)
 
 
 def test_build_run_id_rejects_invalid_sha() -> None:

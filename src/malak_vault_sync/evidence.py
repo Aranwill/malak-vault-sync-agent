@@ -60,6 +60,13 @@ _SENSITIVE_PATTERNS = (
 )
 
 
+def validate_run_id(value: str) -> str:
+    """Validate and return one canonical Phase 1 execution run identifier."""
+    if not isinstance(value, str) or not _RUN_ID_PATTERN.fullmatch(value):
+        raise ValueError(f"Invalid run_id: {value}")
+    return value
+
+
 def build_run_id(
     source_commit: str,
     vault_commit: str,
@@ -141,12 +148,13 @@ def write_evidence_package(
     manifest: EvidenceManifest,
 ) -> Path:
     root_path = Path(output_root)
-    run_id = manifest.execution.run_id
 
-    if not _RUN_ID_PATTERN.fullmatch(run_id):
+    try:
+        run_id = validate_run_id(manifest.execution.run_id)
+    except ValueError as exc:
         raise EvidenceError(
-            f"Invalid run_id: {run_id}"
-        )
+            f"Invalid run_id: {manifest.execution.run_id}"
+        ) from exc
 
     run_path = root_path / run_id
 

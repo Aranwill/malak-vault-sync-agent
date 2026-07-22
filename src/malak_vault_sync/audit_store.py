@@ -1,6 +1,6 @@
+
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,12 +9,7 @@ from malak_vault_sync.audit import (
     serialize_audit_report_json,
     serialize_audit_report_markdown,
 )
-from malak_vault_sync.evidence import sha256_file
-
-
-_RUN_ID_PATTERN = re.compile(
-    r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[0-9a-f]{8}$"
-)
+from malak_vault_sync.evidence import sha256_file, validate_run_id
 
 
 class AuditStoreError(RuntimeError):
@@ -46,10 +41,16 @@ def write_audit_report_package(
     """Write and verify one deterministic audit report package."""
 
     root_path = Path(output_root)
-    run_id = report.evidence.execution.run_id
 
-    if not _RUN_ID_PATTERN.fullmatch(run_id):
-        raise AuditStoreError(f"Invalid audit run_id: {run_id}")
+    try:
+        run_id = validate_run_id(
+            report.evidence.execution.run_id
+        )
+    except ValueError as exc:
+        raise AuditStoreError(
+            f"Invalid audit run_id: "
+            f"{report.evidence.execution.run_id}"
+        ) from exc
 
     run_path = root_path / run_id
 

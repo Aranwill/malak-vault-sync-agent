@@ -1,3 +1,4 @@
+﻿
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from malak_vault_sync.git_inspector import (
 from malak_vault_sync.validators import ValidationFinding
 
 
-RUN_ID = "20260722T120000Z-aaaaaaaa-bbbbbbbb"
+RUN_ID = "20260722T120000Z_aaaaaaaa_bbbbbbbb"
 
 
 def _make_snapshot(
@@ -224,9 +225,9 @@ def test_existing_audit_report_directory_is_rejected(
         "",
         "invalid",
         "20260722T120000Z-aaaaaaaa_bbbbbbbb",
-        "20260722T120000Z-AAAAAAAA-bbbbbbbb",
+        "20260722T120000Z_aaaaaaaa-bbbbbbbb",
         "20260722-120000Z-aaaaaaaa-bbbbbbbb",
-        "20260722T120000Z-aaaaaaa-bbbbbbbb",
+        "20260722T120000Z_aaaaaaa_bbbbbbbb",
     ],
 )
 def test_invalid_run_id_is_rejected(

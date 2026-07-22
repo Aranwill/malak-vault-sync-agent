@@ -1,4 +1,4 @@
-import json
+﻿import json
 from pathlib import Path
 
 import pytest
@@ -40,7 +40,7 @@ def _make_evidence(
     return EvidenceManifest(
         schema_version=1,
         execution=ExecutionMetadata(
-            run_id="20260722T120000Z-aaaaaaaa-bbbbbbbb",
+            run_id="20260722T120000Z_aaaaaaaa_bbbbbbbb",
             generated_at="2026-07-22T12:00:00Z",
             python_version="3.12.0",
             platform="win32",
@@ -265,7 +265,7 @@ def test_audit_report_payload_has_stable_public_structure() -> None:
 
     assert payload["schema_version"] == 1
     assert payload["execution"] == {
-        "run_id": "20260722T120000Z-aaaaaaaa-bbbbbbbb",
+        "run_id": "20260722T120000Z_aaaaaaaa_bbbbbbbb",
         "generated_at": "2026-07-22T12:00:00Z",
         "python_version": "3.12.0",
         "platform": "win32",
