@@ -28,6 +28,7 @@ from malak_vault_sync.models import (
 )
 from malak_vault_sync.runner import RunnerError, run_once
 from malak_vault_sync.state_store import SyncState
+from malak_vault_sync.execution_lock import ExecutionLockError
 
 
 SOURCE_HEAD = "a" * 40
@@ -365,3 +366,95 @@ def test_run_once_rejects_changed_file_limit(
         match="Changed file limit exceeded",
     ):
         run_once(config)
+
+def test_run_once_creates_and_releases_execution_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        lambda *args, **kwargs: (),
+    )
+
+    lock_path = config.state.path.with_name("agent.lock")
+
+    assert not lock_path.exists()
+
+    result = run_once(config)
+
+    assert result.bootstrap is True
+    assert not lock_path.exists()
+
+
+def test_run_once_releases_execution_lock_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+
+    def fail_write_evidence(*args, **kwargs):
+        raise RuntimeError("simulated runner failure")
+
+    monkeypatch.setattr(
+        runner_module,
+        "write_evidence_package",
+        fail_write_evidence,
+    )
+
+    lock_path = config.state.path.with_name("agent.lock")
+
+    with pytest.raises(
+        RuntimeError,
+        match="simulated runner failure",
+    ):
+        run_once(config)
+
+    assert not lock_path.exists()
+
+
+def test_run_once_rejects_existing_execution_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+
+    lock_path = config.state.path.with_name("agent.lock")
+    lock_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    lock_path.write_text(
+        "existing lock\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ExecutionLockError,
+        match="already exists",
+    ):
+        run_once(config)
+
+    assert lock_path.read_text(
+        encoding="utf-8",
+    ) == "existing lock\n"

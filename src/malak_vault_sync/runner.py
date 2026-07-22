@@ -18,6 +18,7 @@ from malak_vault_sync.evidence import (
     sha256_file,
     write_evidence_package,
 )
+from malak_vault_sync.execution_lock import execution_lock
 from malak_vault_sync.git_inspector import (
     ChangedFile,
     RepositorySnapshot,
@@ -61,6 +62,15 @@ def run_once(
 ) -> RunResult:
     """Run one supervised read-only observation and audit cycle."""
 
+    lock_path = config.state.path.with_name("agent.lock")
+
+    with execution_lock(lock_path):
+        return _run_once_unlocked(config)
+
+
+def _run_once_unlocked(
+    config: AgentConfig,
+) -> RunResult:
     state = load_state(config.state.path)
 
     source_snapshot = inspect_repository(
