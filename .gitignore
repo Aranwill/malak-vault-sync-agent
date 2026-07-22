@@ -1,0 +1,46 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local configuration
+config/vault-sync.yaml
+
+# Runtime state and generated evidence
+var/
+*.log
+
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Temporary files
+*.tmp
+*.temp
+*.bak

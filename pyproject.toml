@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "malak-vault-sync-agent"
+version = "0.1.0"
+description = "External deterministic synchronization audit tooling for the Malak Project Vault."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Aranwill" }
+]
+dependencies = [
+    "PyYAML>=6.0,<7.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0,<10.0"
+]
+
+[project.scripts]
+malak-vault-sync = "malak_vault_sync.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
