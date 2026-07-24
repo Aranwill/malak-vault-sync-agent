@@ -6,14 +6,17 @@ from pathlib import Path
 import pytest
 
 from malak_vault_sync.git_inspector import (
+    ChangedFile,
     GitInspectionError,
     get_current_branch,
     get_head,
     get_origin_url,
+    fetch_remote_branch,
     inspect_repository,
     is_worktree_clean,
     list_changed_files,
     run_git_read_only,
+    validate_origin_repository,
     validate_git_repository,
 )
 
@@ -163,6 +166,34 @@ def test_list_changed_files_returns_empty_tuple(
     ) == ()
 
 
+def test_list_changed_files_preserves_rename_paths(
+    git_repository: Path,
+) -> None:
+    base_ref = get_head(git_repository)
+
+    run_git(
+        git_repository,
+        "mv",
+        "example.txt",
+        "renamed.txt",
+    )
+    run_git(git_repository, "commit", "-m", "rename file")
+
+    changed_files = list_changed_files(
+        git_repository,
+        base_ref,
+        get_head(git_repository),
+    )
+
+    assert changed_files == (
+        ChangedFile(
+            status="R100",
+            path="renamed.txt",
+            previous_path="example.txt",
+        ),
+    )
+
+
 def test_disallowed_command_is_rejected(
     git_repository: Path,
 ) -> None:
@@ -186,6 +217,65 @@ def test_missing_git_command_is_rejected(
         match="required",
     ):
         run_git_read_only(git_repository)
+
+
+def test_disallowed_git_argument_combination_is_rejected(
+    git_repository: Path,
+) -> None:
+    with pytest.raises(
+        GitInspectionError,
+        match="argument combination",
+    ):
+        run_git_read_only(
+            git_repository,
+            "status",
+            "--porcelain=v2",
+        )
+
+
+def test_validate_origin_repository_accepts_https_and_ssh() -> None:
+    validate_origin_repository(
+        "https://github.com/Aranwill/jarvis.git",
+        "Aranwill/jarvis",
+    )
+    validate_origin_repository(
+        "git@github.com:Aranwill/jarvis.git",
+        "Aranwill/jarvis",
+    )
+
+
+def test_validate_origin_repository_rejects_mismatch() -> None:
+    with pytest.raises(
+        GitInspectionError,
+        match="mismatch",
+    ):
+        validate_origin_repository(
+            "https://github.com/example/other.git",
+            "Aranwill/jarvis",
+        )
+
+
+def test_fetch_remote_branch_uses_remote_tracking_ref(
+    git_repository: Path,
+) -> None:
+    run_git(
+        git_repository,
+        "remote",
+        "add",
+        "origin",
+        str(git_repository),
+    )
+
+    fetch_remote_branch(
+        git_repository,
+        remote="origin",
+        branch="main",
+    )
+
+    assert get_head(
+        git_repository,
+        "origin/main",
+    ) == get_head(git_repository)
 
 
 def test_inspect_repository_returns_snapshot(

@@ -129,10 +129,7 @@ def audit_report_payload(
             "head_commit": report.evidence.commit_range.head_commit,
         },
         "changed_files": [
-            {
-                "status": changed_file.status,
-                "path": changed_file.path,
-            }
+            _changed_file_payload(changed_file)
             for changed_file in report.evidence.changed_files
         ],
         "candidates": [
@@ -308,13 +305,25 @@ def _candidate_payload(
         "reasons": [
             {
                 "rule_id": reason.rule_id,
-                "source_patterns": list(reason.source_patterns),
-                "vault_candidates": list(reason.vault_candidates),
-                "priority": reason.priority,
+                "source_path": reason.source_path,
             }
             for reason in candidate.reasons
         ],
     }
+
+
+def _changed_file_payload(
+    changed_file: Any,
+) -> dict[str, Any]:
+    payload = {
+        "status": changed_file.status,
+        "path": changed_file.path,
+    }
+
+    if changed_file.previous_path is not None:
+        payload["previous_path"] = changed_file.previous_path
+
+    return payload
 
 
 def _finding_payload(
@@ -333,10 +342,20 @@ def _markdown_changed_files(
     if not changed_files:
         return ["None."]
 
-    return [
-        f"- `{item['status']}` — `{item['path']}`"
-        for item in changed_files
-    ]
+    lines: list[str] = []
+
+    for item in changed_files:
+        if "previous_path" in item:
+            lines.append(
+                f"- `{item['status']}` — "
+                f"`{item['previous_path']}` → `{item['path']}`"
+            )
+        else:
+            lines.append(
+                f"- `{item['status']}` — `{item['path']}`"
+            )
+
+    return lines
 
 
 def _markdown_candidates(
@@ -366,8 +385,8 @@ def _markdown_candidates(
             for reason in reasons:
                 lines.append(
                     "  - "
-                    f"`{reason['rule_id']}` "
-                    f"(priority: `{reason['priority']}`)"
+                    f"`{reason['rule_id']}` — "
+                    f"`{reason['source_path']}`"
                 )
 
         lines.append("")

@@ -18,6 +18,8 @@ class VaultConfig:
     repository: str
     local_path: Path
     branch: str
+    remote: str = "origin"
+    fetch: bool = True
 
 
 @dataclass(frozen=True, slots=True)

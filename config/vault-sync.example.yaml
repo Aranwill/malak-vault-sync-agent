@@ -6,12 +6,14 @@ source:
   local_path: D:/Ollama/jarvis
   remote: origin
   branch: main
-  fetch: false
+  fetch: true
 
 vault:
   repository: Aranwill/malak-project-vault
   local_path: D:/Ollama/malak-project-vault
+  remote: origin
   branch: main
+  fetch: true
 
 state:
   path: var/state/sync-state.json

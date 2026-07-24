@@ -46,7 +46,8 @@ class EvidenceManifest:
 
 
 _RUN_ID_PATTERN = re.compile(
-    r"^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{8}_[0-9a-f]{8}$"
+    r"^[0-9]{8}T[0-9]{6}(?:[0-9]{6})?Z_"
+    r"[0-9a-f]{8}_[0-9a-f]{8}$"
 )
 
 _SENSITIVE_PATTERNS = (
@@ -84,8 +85,19 @@ def build_run_id(
         "vault_commit",
     )
 
+    utc_timestamp = timestamp.astimezone(UTC)
+    timestamp_token = (
+        f"{utc_timestamp:%Y%m%dT%H%M%S}"
+        + (
+            f"{utc_timestamp:%f}"
+            if utc_timestamp.microsecond
+            else ""
+        )
+        + "Z"
+    )
+
     return (
-        f"{timestamp.astimezone(UTC):%Y%m%dT%H%M%SZ}_"
+        f"{timestamp_token}_"
         f"{source_sha[:8]}_{vault_sha[:8]}"
     )
 
@@ -111,7 +123,7 @@ def build_manifest(
     )
 
     run_id = build_run_id(
-        source_snapshot.head,
+        head_sha,
         vault_snapshot.head,
         generated_at=timestamp,
     )
@@ -146,6 +158,8 @@ def build_manifest(
 def write_evidence_package(
     output_root: str | Path,
     manifest: EvidenceManifest,
+    *,
+    max_bytes: int | None = None,
 ) -> Path:
     root_path = Path(output_root)
 
@@ -199,6 +213,7 @@ def write_evidence_package(
                 encoding="utf-8",
                 newline="\n",
             )
+            _enforce_package_size(run_path, max_bytes)
 
             hashes.append(
                 (
@@ -217,6 +232,7 @@ def write_evidence_package(
             encoding="utf-8",
             newline="\n",
         )
+        _enforce_package_size(run_path, max_bytes)
 
         _verify_package(run_path)
 
@@ -344,6 +360,31 @@ def _remove_directory_contents(
     for child in directory.iterdir():
         if child.is_file():
             child.unlink()
+
+
+def _enforce_package_size(
+    run_path: Path,
+    max_bytes: int | None,
+) -> None:
+    if max_bytes is None:
+        return
+
+    if max_bytes <= 0:
+        raise EvidenceError(
+            "Evidence size limit must be greater than zero."
+        )
+
+    total_bytes = sum(
+        child.stat().st_size
+        for child in run_path.iterdir()
+        if child.is_file()
+    )
+
+    if total_bytes > max_bytes:
+        raise EvidenceError(
+            "Evidence package size limit exceeded: "
+            f"{total_bytes} > {max_bytes}."
+        )
 
 
 def _validate_commit_sha(

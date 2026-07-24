@@ -14,12 +14,14 @@ source:
   local_path: D:/Ollama/jarvis
   remote: origin
   branch: main
-  fetch: false
+  fetch: true
 
 vault:
   repository: Aranwill/malak-project-vault
   local_path: D:/Ollama/malak-project-vault
+  remote: origin
   branch: main
+  fetch: true
 
 state:
   path: var/state/sync-state.json
@@ -59,7 +61,7 @@ def test_load_valid_config(tmp_path: Path) -> None:
     assert config.source.repository == "Aranwill/jarvis"
     assert config.source.remote == "origin"
     assert config.source.branch == "main"
-    assert config.source.fetch is False
+    assert config.source.fetch is True
     assert config.vault.repository == "Aranwill/malak-project-vault"
     assert config.vault.branch == "main"
     assert config.security.follow_symlinks is False
@@ -103,19 +105,19 @@ def test_non_dry_run_mode_is_rejected(
         load_config(write_config(tmp_path, content))
 
 
-def test_fetch_enabled_is_rejected(
+def test_fetch_can_be_disabled_for_supervised_local_inspection(
     tmp_path: Path,
 ) -> None:
     content = VALID_CONFIG.replace(
-        "fetch: false",
         "fetch: true",
+        "fetch: false",
+        1,
     )
 
-    with pytest.raises(
-        ConfigurationError,
-        match="Fetch must remain disabled",
-    ):
-        load_config(write_config(tmp_path, content))
+    config = load_config(write_config(tmp_path, content))
+
+    assert config.source.fetch is False
+    assert config.vault.fetch is True
 
 
 def test_wrong_source_repository_is_rejected(

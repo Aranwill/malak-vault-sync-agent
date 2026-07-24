@@ -22,11 +22,14 @@ from malak_vault_sync.execution_lock import execution_lock
 from malak_vault_sync.git_inspector import (
     ChangedFile,
     RepositorySnapshot,
+    fetch_remote_branch,
+    get_origin_url,
     inspect_repository,
     list_changed_files,
+    validate_origin_repository,
 )
 from malak_vault_sync.models import AgentConfig
-from malak_vault_sync.state_store import load_state
+from malak_vault_sync.state_store import load_state, save_state
 from malak_vault_sync.validators import (
     ValidationFinding,
     validate_markdown,
@@ -94,21 +97,57 @@ def _run_once_unlocked(
     config: AgentConfig,
 ) -> RunResult:
     state = load_state(config.state.path)
+    timeout = config.limits.command_timeout_seconds
+
+    if config.source.fetch:
+        validate_origin_repository(
+            get_origin_url(
+                config.source.local_path,
+                timeout_seconds=timeout,
+            ),
+            config.source.repository,
+        )
+        fetch_remote_branch(
+            config.source.local_path,
+            remote=config.source.remote,
+            branch=config.source.branch,
+            timeout_seconds=timeout,
+        )
+
+    if config.vault.fetch:
+        validate_origin_repository(
+            get_origin_url(
+                config.vault.local_path,
+                timeout_seconds=timeout,
+            ),
+            config.vault.repository,
+        )
+        fetch_remote_branch(
+            config.vault.local_path,
+            remote=config.vault.remote,
+            branch=config.vault.branch,
+            timeout_seconds=timeout,
+        )
 
     source_snapshot = inspect_repository(
         config.source.local_path,
         remote_ref=(
             f"{config.source.remote}/{config.source.branch}"
         ),
+        timeout_seconds=timeout,
     )
     vault_snapshot = inspect_repository(
         config.vault.local_path,
-        remote_ref=f"origin/{config.vault.branch}",
+        remote_ref=(
+            f"{config.vault.remote}/{config.vault.branch}"
+        ),
+        timeout_seconds=timeout,
     )
 
     _validate_repository_snapshot(
         name="source",
         snapshot=source_snapshot,
+        expected_repository=config.source.repository,
         expected_branch=config.source.branch,
         require_clean=(
             config.security.require_clean_source_worktree
@@ -117,19 +156,21 @@ def _run_once_unlocked(
     _validate_repository_snapshot(
         name="vault",
         snapshot=vault_snapshot,
+        expected_repository=config.vault.repository,
         expected_branch=config.vault.branch,
         require_clean=(
             config.security.require_clean_vault_worktree
         ),
+        require_remote_alignment=True,
     )
 
     bootstrap = state.last_observed_commit is None
     base_commit = (
-        source_snapshot.head
+        source_snapshot.remote_head
         if bootstrap
         else state.last_observed_commit
     )
-    head_commit = source_snapshot.head
+    head_commit = source_snapshot.remote_head
 
     if bootstrap:
         changed_files: tuple[ChangedFile, ...] = ()
@@ -138,6 +179,7 @@ def _run_once_unlocked(
             config.source.local_path,
             base_commit,
             head_commit,
+            timeout_seconds=timeout,
         )
 
     if len(changed_files) > config.limits.max_changed_files:
@@ -158,6 +200,7 @@ def _run_once_unlocked(
     evidence_directory = write_evidence_package(
         config.output.evidence_dir,
         evidence,
+        max_bytes=config.limits.max_evidence_bytes,
     )
 
     candidates = resolve_candidates(changed_files)
@@ -165,6 +208,7 @@ def _run_once_unlocked(
         vault_root=config.vault.local_path,
         candidates=candidates,
         follow_symlinks=config.security.follow_symlinks,
+        max_file_bytes=config.limits.max_file_bytes,
     )
 
     evidence_hash_manifest = evidence_directory / "hashes.sha256"
@@ -183,6 +227,13 @@ def _run_once_unlocked(
         config.output.report_dir,
         report,
     )
+
+    next_state = state.with_successful_observation(
+        observed_commit=head_commit,
+        vault_commit=vault_snapshot.head,
+        run_id=evidence.execution.run_id,
+    )
+    save_state(config.state.path, next_state)
 
     return RunResult(
         source_snapshot=source_snapshot,
@@ -203,9 +254,16 @@ def _validate_repository_snapshot(
     *,
     name: str,
     snapshot: RepositorySnapshot,
+    expected_repository: str,
     expected_branch: str,
     require_clean: bool,
+    require_remote_alignment: bool = False,
 ) -> None:
+    validate_origin_repository(
+        snapshot.origin_url,
+        expected_repository,
+    )
+
     if snapshot.branch != expected_branch:
         raise RunnerError(
             f"Unexpected {name} branch: "
@@ -218,25 +276,56 @@ def _validate_repository_snapshot(
             f"{name.capitalize()} working tree must be clean."
         )
 
+    if (
+        require_remote_alignment
+        and snapshot.head != snapshot.remote_head
+    ):
+        raise RunnerError(
+            f"{name.capitalize()} local HEAD must match remote HEAD."
+        )
+
 
 def _validate_candidates(
     *,
     vault_root: Path,
     candidates: tuple[DocumentCandidate, ...],
     follow_symlinks: bool,
+    max_file_bytes: int,
 ) -> tuple[ValidationFinding, ...]:
     findings: list[ValidationFinding] = []
 
     for candidate in candidates:
-        findings.extend(
-            validate_path(
-                vault_root,
-                candidate.path,
-                follow_symlinks=follow_symlinks,
-            )
+        path_findings = validate_path(
+            vault_root,
+            candidate.path,
+            follow_symlinks=follow_symlinks,
         )
+        findings.extend(path_findings)
+
+        if any(
+            finding.severity == "error"
+            for finding in path_findings
+        ):
+            continue
 
         candidate_path = vault_root / candidate.path
+
+        try:
+            candidate_too_large = (
+                candidate_path.is_file()
+                and candidate_path.stat().st_size > max_file_bytes
+            )
+        except OSError as exc:
+            raise RunnerError(
+                f"Could not inspect candidate file: {candidate.path}."
+            ) from exc
+
+        if candidate_too_large:
+            raise RunnerError(
+                "Candidate file limit exceeded: "
+                f"{candidate.path}."
+            )
+
         suffix = candidate_path.suffix.lower()
 
         if suffix == ".md":

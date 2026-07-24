@@ -117,6 +117,21 @@ def test_build_run_id_matches_canonical_validation_contract() -> None:
     assert validate_run_id(run_id) == run_id
 
 
+def test_build_run_id_uses_microseconds_to_avoid_collisions() -> None:
+    generated_at = GENERATED_AT.replace(microsecond=123456)
+
+    run_id = build_run_id(
+        SOURCE_COMMIT,
+        VAULT_COMMIT,
+        generated_at=generated_at,
+    )
+
+    assert run_id == (
+        "20260722T193000123456Z_aaaaaaaa_bbbbbbbb"
+    )
+    assert validate_run_id(run_id) == run_id
+
+
 @pytest.mark.parametrize(
     "run_id",
     [
@@ -155,7 +170,7 @@ def test_build_manifest_sorts_changed_files(
     assert manifest.schema_version == 1
     assert manifest.execution.mode == "dry-run"
     assert manifest.execution.run_id == (
-        "20260722T193000Z_aaaaaaaa_bbbbbbbb"
+        "20260722T193000Z_dddddddd_bbbbbbbb"
     )
     assert manifest.commit_range.base_commit == BASE_COMMIT
     assert manifest.commit_range.head_commit == HEAD_COMMIT
@@ -299,16 +314,31 @@ def test_existing_run_directory_is_rejected(
         )
 
 
+def test_evidence_package_size_limit_is_enforced(
+    tmp_path: Path,
+) -> None:
+    manifest = build_test_manifest(tmp_path)
+
+    with pytest.raises(
+        EvidenceError,
+        match="size limit exceeded",
+    ):
+        write_evidence_package(
+            tmp_path / "evidence",
+            manifest,
+            max_bytes=1,
+        )
+
+    assert not any((tmp_path / "evidence").iterdir())
+
+
 def test_sha256_file_is_stable(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "sample.txt"
-    path.write_text(
-        "sample\n",
-        encoding="utf-8",
-    )
+    path.write_bytes(b"sample\n")
 
     assert sha256_file(path) == (
-    "24c43f07d542dc7f1b488db24289e296"
-    "5aea4fed4b0071483e6696d816720a14"
-)
+        "aaf9ff488e0767da5ea1d56118e6f65"
+        "a16c5633b0cefc1fa089bd3ab1810613d"
+    )

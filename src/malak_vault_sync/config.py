@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -43,7 +43,9 @@ _SOURCE_KEYS = {
 _VAULT_KEYS = {
     "repository",
     "local_path",
+    "remote",
     "branch",
+    "fetch",
 }
 
 _STATE_KEYS = {"path"}
@@ -127,7 +129,9 @@ def load_config(path: str | Path) -> AgentConfig:
     vault = VaultConfig(
         repository=_require_string(vault_data, "repository"),
         local_path=_require_path(vault_data, "local_path"),
+        remote=_optional_string(vault_data, "remote", "origin"),
         branch=_require_string(vault_data, "branch"),
+        fetch=_optional_bool(vault_data, "fetch", True),
     )
 
     state = StateConfig(
@@ -295,6 +299,28 @@ def _require_bool(
     return value
 
 
+def _optional_string(
+    data: Mapping[str, Any],
+    key: str,
+    default: str,
+) -> str:
+    if key not in data:
+        return default
+
+    return _require_string(data, key)
+
+
+def _optional_bool(
+    data: Mapping[str, Any],
+    key: str,
+    default: bool,
+) -> bool:
+    if key not in data:
+        return default
+
+    return _require_bool(data, key)
+
+
 def _require_path(
     data: Mapping[str, Any],
     key: str,
@@ -302,7 +328,10 @@ def _require_path(
     value = _require_string(data, key)
     path = Path(value)
 
-    if not path.is_absolute():
+    if not (
+        path.is_absolute()
+        or PureWindowsPath(value).is_absolute()
+    ):
         raise ConfigurationError(
             f"Expected absolute path: {key}"
         )
@@ -350,11 +379,6 @@ def _validate_phase_1_constraints(
             "Phase 1 source branch must be main."
         )
 
-    if source.fetch:
-        raise ConfigurationError(
-            "Fetch must remain disabled in Gate 1."
-        )
-
     if vault.repository != "Aranwill/malak-project-vault":
         raise ConfigurationError(
             "Phase 1 Vault repository is not allowed."
@@ -363,6 +387,11 @@ def _validate_phase_1_constraints(
     if vault.branch != "main":
         raise ConfigurationError(
             "Phase 1 Vault branch must be main."
+        )
+
+    if vault.remote != "origin":
+        raise ConfigurationError(
+            "Read-only Vault remote must be origin."
         )
 
     if source.local_path == vault.local_path:
