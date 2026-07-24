@@ -11,6 +11,10 @@ from malak_vault_sync.audit import (
     serialize_audit_report_json,
     serialize_audit_report_markdown,
 )
+from malak_vault_sync.candidate_resolver import (
+    CandidateReason,
+    DocumentCandidate,
+)
 from malak_vault_sync.evidence import (
     CommitRange,
     EvidenceManifest,
@@ -330,6 +334,41 @@ def test_serialized_audit_report_json_is_deterministic() -> None:
     assert first == second
     assert first.endswith("\n")
     assert json.loads(first) == audit_report_payload(report)
+
+
+def test_report_serializes_real_candidate_reason_contract() -> None:
+    candidate = DocumentCandidate(
+        path="02-current-baseline/CURRENT_BASELINE.md",
+        priority="high",
+        disposition="review_required",
+        reasons=(
+            CandidateReason(
+                rule_id="baseline-source-change",
+                source_path="README.md",
+            ),
+        ),
+    )
+    report = build_audit_report(
+        evidence=_make_evidence(),
+        evidence_reference=EvidenceReference(
+            path="evidence/run-001",
+            sha256="a" * 64,
+        ),
+        candidates=(candidate,),
+        findings=(),
+    )
+
+    payload = audit_report_payload(report)
+
+    assert payload["candidates"][0]["reasons"] == [
+        {
+            "rule_id": "baseline-source-change",
+            "source_path": "README.md",
+        }
+    ]
+    assert "`baseline-source-change` — `README.md`" in (
+        serialize_audit_report_markdown(report)
+    )
 
 
 def test_serialized_audit_report_json_uses_sorted_keys() -> None:

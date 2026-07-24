@@ -71,6 +71,8 @@ _DEFAULT_RULES = (
             "README.md",
             "CHANGELOG.md",
             "ROADMAP.md",
+            "PROJECT.md",
+            "docs/project/**",
             "documents/projects/jarvis/releases/**",
             "documents/projects/jarvis/sprints/**",
         ),
@@ -85,6 +87,8 @@ _DEFAULT_RULES = (
         rule_id="architecture-change",
         source_patterns=(
             "src/malak/**",
+            "docs/architecture/**",
+            "docs/operations/**",
             "documents/projects/jarvis/architecture/**",
         ),
         vault_candidates=(
@@ -112,6 +116,10 @@ _DEFAULT_RULES = (
             "documents/projects/jarvis/governance/**",
             "documents/projects/jarvis/decisions/**",
             "documents/projects/jarvis/adr/**",
+            "docs/governance/**",
+            "docs/architecture/decisions/**",
+            "docs/architecture/adr/**",
+            "docs/knowledge/governance/**",
         ),
         vault_candidates=(
             "03-roadmap/IMPLEMENTATION_ROADMAP.md",
@@ -125,6 +133,7 @@ _DEFAULT_RULES = (
         rule_id="security-change",
         source_patterns=(
             "SECURITY.md",
+            "docs/security/**",
             "documents/projects/jarvis/security/**",
         ),
         vault_candidates=(
@@ -147,19 +156,30 @@ def resolve_candidates(
     candidate_reasons: dict[str, list[CandidateReason]] = {}
     candidate_priorities: dict[str, str] = {}
 
-    normalized_changes = tuple(
-        sorted(
-            (
+    normalized_changes: list[ChangedFile] = []
+
+    for changed in changed_files:
+        normalized_changes.append(
+            ChangedFile(
+                status=changed.status,
+                path=_normalize_source_path(changed.path),
+            )
+        )
+
+        if changed.previous_path is not None:
+            normalized_changes.append(
                 ChangedFile(
                     status=changed.status,
-                    path=_normalize_source_path(changed.path),
+                    path=_normalize_source_path(
+                        changed.previous_path
+                    ),
                 )
-                for changed in changed_files
-            ),
-            key=lambda item: (
-                item.path,
-                item.status,
-            ),
+            )
+
+    normalized_changes.sort(
+        key=lambda item: (
+            item.path,
+            item.status,
         )
     )
 

@@ -1,4 +1,5 @@
-﻿from pathlib import Path
+﻿from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +9,7 @@ from malak_vault_sync.audit_store import (
     AuditArtifact,
     AuditArtifacts,
 )
+from malak_vault_sync.candidate_resolver import DocumentCandidate
 from malak_vault_sync.evidence import (
     CommitRange,
     EvidenceManifest,
@@ -15,6 +17,7 @@ from malak_vault_sync.evidence import (
 )
 from malak_vault_sync.git_inspector import (
     ChangedFile,
+    GitInspectionError,
     RepositorySnapshot,
 )
 from malak_vault_sync.models import (
@@ -35,6 +38,7 @@ SOURCE_HEAD = "a" * 40
 BASE_COMMIT = "b" * 40
 VAULT_HEAD = "c" * 40
 RUN_ID = "20260722T120000Z_aaaaaaaa_bbbbbbbb"
+REMOTE_SOURCE_HEAD = "d" * 40
 
 
 def _make_config(tmp_path: Path) -> AgentConfig:
@@ -52,6 +56,7 @@ def _make_config(tmp_path: Path) -> AgentConfig:
             repository="Aranwill/malak-project-vault",
             local_path=tmp_path / "vault",
             branch="main",
+            fetch=False,
         ),
         state=StateConfig(
             path=tmp_path / "state" / "sync-state.json",
@@ -79,14 +84,16 @@ def _make_snapshot(
     path: Path,
     *,
     head: str,
+    repository: str,
+    remote_head: str | None = None,
     is_clean: bool = True,
 ) -> RepositorySnapshot:
     return RepositorySnapshot(
         repository_path=path,
         branch="main",
         head=head,
-        remote_head=head,
-        origin_url="https://github.com/Aranwill/repository.git",
+        remote_head=remote_head or head,
+        origin_url=f"https://github.com/{repository}.git",
         is_clean=is_clean,
     )
 
@@ -123,17 +130,23 @@ def _install_common_stubs(
     *,
     state: SyncState,
     source_clean: bool = True,
+    source_remote_head: str | None = None,
+    vault_remote_head: str | None = None,
 ) -> None:
     config = _make_config(tmp_path)
 
     source_snapshot = _make_snapshot(
         config.source.local_path,
         head=SOURCE_HEAD,
+        repository="Aranwill/jarvis",
+        remote_head=source_remote_head,
         is_clean=source_clean,
     )
     vault_snapshot = _make_snapshot(
         config.vault.local_path,
         head=VAULT_HEAD,
+        repository="Aranwill/malak-project-vault",
+        remote_head=vault_remote_head,
     )
 
     monkeypatch.setattr(
@@ -146,8 +159,9 @@ def _install_common_stubs(
         repository_path: Path,
         *,
         remote_ref: str,
+        timeout_seconds: int,
     ) -> RepositorySnapshot:
-        del remote_ref
+        del remote_ref, timeout_seconds
 
         if repository_path == config.source.local_path:
             return source_snapshot
@@ -177,7 +191,7 @@ def _install_common_stubs(
     monkeypatch.setattr(
         runner_module,
         "write_evidence_package",
-        lambda output_root, manifest: evidence_directory,
+        lambda output_root, manifest, **kwargs: evidence_directory,
     )
     monkeypatch.setattr(
         runner_module,
@@ -210,6 +224,11 @@ def _install_common_stubs(
                 sha256="1" * 64,
             ),
         ),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, next_state: None,
     )
 
 
@@ -276,7 +295,9 @@ def test_run_once_compares_from_last_observed_commit(
         repository_path: Path,
         base_ref: str,
         head_ref: str,
+        **kwargs,
     ) -> tuple[ChangedFile, ...]:
+        del kwargs
         calls.append(
             (
                 repository_path,
@@ -358,7 +379,7 @@ def test_run_once_rejects_changed_file_limit(
     monkeypatch.setattr(
         runner_module,
         "list_changed_files",
-        lambda repository_path, base_ref, head_ref: changed_files,
+        lambda repository_path, base_ref, head_ref, **kwargs: changed_files,
     )
 
     with pytest.raises(
@@ -366,6 +387,247 @@ def test_run_once_rejects_changed_file_limit(
         match="Changed file limit exceeded",
     ):
         run_once(config)
+
+
+def test_run_once_uses_remote_head_and_persists_observation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+        source_remote_head=REMOTE_SOURCE_HEAD,
+    )
+
+    saved_states: list[SyncState] = []
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, state: saved_states.append(state),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        lambda *args, **kwargs: pytest.fail(
+            "Bootstrap must not calculate a diff."
+        ),
+    )
+
+    result = run_once(config)
+
+    assert result.base_commit == REMOTE_SOURCE_HEAD
+    assert result.head_commit == REMOTE_SOURCE_HEAD
+    assert saved_states[0].last_observed_commit == REMOTE_SOURCE_HEAD
+    assert saved_states[0].last_successful_run_id == RUN_ID
+    assert saved_states[0].last_applied_commit is None
+
+
+def test_run_once_compares_state_to_remote_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=BASE_COMMIT,
+        vault_commit=VAULT_HEAD,
+        run_id="previous-run",
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+        source_remote_head=REMOTE_SOURCE_HEAD,
+    )
+
+    calls: list[tuple[str, str, int]] = []
+
+    def fake_list_changed_files(
+        repository_path: Path,
+        base_ref: str,
+        head_ref: str,
+        *,
+        timeout_seconds: int,
+    ) -> tuple[ChangedFile, ...]:
+        del repository_path
+        calls.append((base_ref, head_ref, timeout_seconds))
+        return ()
+
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        fake_list_changed_files,
+    )
+
+    result = run_once(config)
+
+    assert result.head_commit == REMOTE_SOURCE_HEAD
+    assert calls == [
+        (
+            BASE_COMMIT,
+            REMOTE_SOURCE_HEAD,
+            config.limits.command_timeout_seconds,
+        )
+    ]
+
+
+def test_run_once_requires_vault_remote_alignment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+        vault_remote_head="e" * 40,
+    )
+
+    with pytest.raises(
+        RunnerError,
+        match="Vault local HEAD must match remote HEAD",
+    ):
+        run_once(config)
+
+
+def test_run_once_applies_candidate_file_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+
+    candidate_path = (
+        config.vault.local_path
+        / "02-current-baseline"
+        / "CURRENT_BASELINE.md"
+    )
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_bytes(
+        b"x" * (config.limits.max_file_bytes + 1)
+    )
+
+    monkeypatch.setattr(
+        runner_module,
+        "resolve_candidates",
+        lambda changed_files: (
+            DocumentCandidate(
+                path=(
+                    "02-current-baseline/"
+                    "CURRENT_BASELINE.md"
+                ),
+                priority="high",
+                disposition="review_required",
+                reasons=(),
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        RunnerError,
+        match="Candidate file limit exceeded",
+    ):
+        run_once(config)
+
+
+def test_run_once_fetches_only_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(
+        base_config,
+        source=replace(base_config.source, fetch=True),
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+
+    calls: list[tuple[Path, str, str, int]] = []
+
+    def fake_fetch(
+        repository_path: Path,
+        *,
+        remote: str,
+        branch: str,
+        timeout_seconds: int,
+    ) -> None:
+        calls.append(
+            (
+                repository_path,
+                remote,
+                branch,
+                timeout_seconds,
+            )
+        )
+
+    monkeypatch.setattr(
+        runner_module,
+        "fetch_remote_branch",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "get_origin_url",
+        lambda repository_path, **kwargs: (
+            "https://github.com/Aranwill/jarvis.git"
+        ),
+    )
+
+    run_once(config)
+
+    assert calls == [
+        (
+            config.source.local_path,
+            "origin",
+            "main",
+            config.limits.command_timeout_seconds,
+        )
+    ]
+
+
+def test_run_once_validates_origin_before_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(
+        base_config,
+        source=replace(base_config.source, fetch=True),
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "get_origin_url",
+        lambda repository_path, **kwargs: (
+            "https://github.com/example/untrusted.git"
+        ),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "fetch_remote_branch",
+        lambda *args, **kwargs: pytest.fail(
+            "Fetch must not run before origin validation."
+        ),
+    )
+
+    with pytest.raises(
+        GitInspectionError,
+        match="mismatch",
+    ):
+        run_once(config)
+
 
 def test_run_once_creates_and_releases_execution_lock(
     monkeypatch: pytest.MonkeyPatch,

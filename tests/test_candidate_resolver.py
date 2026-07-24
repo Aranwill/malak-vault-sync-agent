@@ -132,6 +132,43 @@ def test_no_matching_rule_returns_empty_tuple() -> None:
     assert candidates == ()
 
 
+def test_current_governance_path_returns_candidates() -> None:
+    candidates = resolve_candidates(
+        (
+            ChangedFile(
+                status="M",
+                path="docs/governance/cognitive_constitution.md",
+            ),
+        )
+    )
+
+    assert {
+        candidate.path for candidate in candidates
+    } >= {
+        "05-decisions/PENDING_DECISIONS.md",
+        "08-session-context/MALAK_SESSION_CONTEXT.md",
+    }
+
+
+def test_rename_considers_previous_and_current_paths() -> None:
+    candidates = resolve_candidates(
+        (
+            ChangedFile(
+                status="R100",
+                previous_path="docs/governance/old.md",
+                path="archive/old.md",
+            ),
+        )
+    )
+
+    assert candidates
+    assert all(
+        reason.source_path == "docs/governance/old.md"
+        for candidate in candidates
+        for reason in candidate.reasons
+    )
+
+
 def test_windows_paths_are_normalized() -> None:
     candidates = resolve_candidates(
         (
