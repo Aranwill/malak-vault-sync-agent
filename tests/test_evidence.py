@@ -336,10 +336,7 @@ def test_sha256_file_is_stable(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "sample.txt"
-    path.write_text(
-        "sample\n",
-        encoding="utf-8",
-    )
+    path.write_bytes(b"sample\n")
 
     assert sha256_file(path) == (
         "aaf9ff488e0767da5ea1d56118e6f65"
