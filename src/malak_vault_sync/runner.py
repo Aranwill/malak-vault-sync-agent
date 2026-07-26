@@ -200,11 +200,15 @@ def _run_once_unlocked(
     )
 
     bootstrap = state.last_observed_commit is None
-    base_commit = (
-        source_snapshot.remote_head
-        if bootstrap
-        else state.last_observed_commit
-    )
+    if bootstrap:
+        base_commit = source_snapshot.remote_head
+    elif config.mode == "controlled-proposal":
+        base_commit = (
+            state.last_proposed_commit
+            or state.last_observed_commit
+        )
+    else:
+        base_commit = state.last_observed_commit
     head_commit = source_snapshot.remote_head
 
     if bootstrap:
@@ -293,6 +297,16 @@ def _run_once_unlocked(
         vault_commit=vault_snapshot.head,
         run_id=evidence.execution.run_id,
     )
+    if (
+        bootstrap
+        or (
+            config.mode == "controlled-proposal"
+            and report.conclusion is not AuditConclusion.FAIL
+        )
+    ):
+        next_state = next_state.with_proposal_cursor(
+            head_commit
+        )
     save_state(config.state.path, next_state)
 
     return RunResult(

@@ -87,6 +87,18 @@ Las ejecuciones posteriores solo crean una PR cuando:
 - no hay errores de validación;
 - no existe otra PR de sincronización abierta.
 
+`dry-run` y `controlled-proposal` mantienen cursores independientes. El
+primero puede avanzar el último commit observado sin perder el inicio
+del rango todavía no propuesto. El segundo vuelve a generar evidencia y
+auditoría para ese rango antes de crear la rama, los commits y la PR
+draft. Solo una ejecución controlada sin conclusión `fail` avanza el
+cursor de propuesta.
+
+La migración desde el estado de esquema 1 es automática. Cuando el
+último `dry-run` ya avanzó el cursor antiguo, el agente recupera la base
+anterior desde `sync-state.json.prev`; no requiere editar ni restaurar
+el estado manualmente.
+
 Si el `push` de una propuesta funciona pero GitHub CLI no puede crear la
 PR draft, el agente elimina únicamente la rama remota de esa ejecución y
 no persiste el nuevo estado observado. La siguiente corrida puede

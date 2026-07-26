@@ -29,10 +29,11 @@ def test_load_missing_state_returns_initial(
 def test_initial_state_has_expected_values() -> None:
     state = SyncState.initial()
 
-    assert state.schema_version == 1
+    assert state.schema_version == 2
     assert state.source_repository == "Aranwill/jarvis"
     assert state.source_branch == "main"
     assert state.last_observed_commit is None
+    assert state.last_proposed_commit is None
     assert state.last_applied_commit is None
     assert state.last_successful_run_id is None
     assert state.last_successful_run_at is None
@@ -58,6 +59,7 @@ def test_successful_observation_builds_valid_state() -> None:
     )
 
     assert state.last_observed_commit == SOURCE_COMMIT
+    assert state.last_proposed_commit == SOURCE_COMMIT
     assert state.last_applied_commit is None
     assert state.last_successful_run_id == "run-001"
     assert state.last_successful_run_at == completed_at.isoformat()
@@ -137,9 +139,79 @@ def test_saved_json_is_deterministic(
     raw_data = json.loads(payload)
 
     assert payload.endswith("\n")
-    assert raw_data["schema_version"] == 1
+    assert raw_data["schema_version"] == 2
     assert raw_data["status"] == "never_run"
+    assert raw_data["last_proposed_commit"] is None
     assert raw_data["last_applied_commit"] is None
+
+
+def test_v1_state_recovers_proposal_cursor_from_backup(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sync-state.json"
+    previous_commit = "c" * 40
+
+    current_payload = {
+        "schema_version": 1,
+        "source_repository": "Aranwill/jarvis",
+        "source_branch": "main",
+        "last_observed_commit": SOURCE_COMMIT,
+        "last_applied_commit": None,
+        "last_successful_run_id": "dry-run",
+        "last_successful_run_at": (
+            "2026-07-26T18:04:41+00:00"
+        ),
+        "vault_commit_at_run": VAULT_COMMIT,
+        "status": "success",
+    }
+    previous_payload = {
+        **current_payload,
+        "last_observed_commit": previous_commit,
+        "last_successful_run_id": "previous-run",
+    }
+
+    path.write_text(
+        json.dumps(current_payload),
+        encoding="utf-8",
+    )
+    path.with_suffix(".json.prev").write_text(
+        json.dumps(previous_payload),
+        encoding="utf-8",
+    )
+
+    state = load_state(path)
+
+    assert state.schema_version == 2
+    assert state.last_observed_commit == SOURCE_COMMIT
+    assert state.last_proposed_commit == previous_commit
+
+
+def test_v1_state_without_backup_uses_observed_as_baseline(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sync-state.json"
+    payload = {
+        "schema_version": 1,
+        "source_repository": "Aranwill/jarvis",
+        "source_branch": "main",
+        "last_observed_commit": SOURCE_COMMIT,
+        "last_applied_commit": None,
+        "last_successful_run_id": "previous-run",
+        "last_successful_run_at": (
+            "2026-07-26T18:04:41+00:00"
+        ),
+        "vault_commit_at_run": VAULT_COMMIT,
+        "status": "success",
+    }
+    path.write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    state = load_state(path)
+
+    assert state.schema_version == 2
+    assert state.last_proposed_commit == SOURCE_COMMIT
 
 
 def test_corrupted_json_is_rejected(

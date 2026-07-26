@@ -797,6 +797,108 @@ def test_controlled_run_prepares_governed_proposal(
     assert calls[0]["branch_prefix"] == "agent/vault-sync"
 
 
+def test_controlled_run_promotes_range_after_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(
+        base_config,
+        mode="controlled-proposal",
+        proposal=ProposalConfig(
+            branch_prefix="agent/vault-sync",
+            push=True,
+            open_draft_pr=True,
+            github_cli="gh",
+        ),
+    )
+    state = (
+        SyncState.initial()
+        .with_successful_observation(
+            observed_commit=BASE_COMMIT,
+            vault_commit=VAULT_HEAD,
+            run_id="baseline-run",
+        )
+        .with_successful_observation(
+            observed_commit=SOURCE_HEAD,
+            vault_commit=VAULT_HEAD,
+            run_id="dry-run",
+        )
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+    )
+    changed_files = (
+        ChangedFile(status="M", path="README.md"),
+    )
+    candidate = DocumentCandidate(
+        path="02-current-baseline/CURRENT_BASELINE.md",
+        priority="high",
+        disposition="review_required",
+        reasons=(),
+    )
+    candidate_path = config.vault.local_path / candidate.path
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text(
+        "---\ntitle: Baseline\n---\n\n# Baseline\n",
+        encoding="utf-8",
+    )
+    expected = VaultProposal(
+        branch="agent/vault-sync-aaaaaaaa",
+        content_commit="1" * 40,
+        audit_commit="2" * 40,
+        report_path="07-audits/vault-synchronization/report.md",
+        pull_request_url="https://github.com/example/pr/1",
+        modified_paths=(candidate.path,),
+    )
+    ranges: list[tuple[str, str]] = []
+    saved_states: list[SyncState] = []
+
+    def fake_list_changed_files(
+        repository_path: Path,
+        base_ref: str,
+        head_ref: str,
+        **kwargs,
+    ) -> tuple[ChangedFile, ...]:
+        del repository_path, kwargs
+        ranges.append((base_ref, head_ref))
+        return changed_files
+
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        fake_list_changed_files,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "resolve_candidates",
+        lambda changed: (candidate,),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "prepare_vault_proposal",
+        lambda **kwargs: expected,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, next_state: saved_states.append(
+            next_state
+        ),
+    )
+
+    result = run_once(config)
+
+    assert result.base_commit == BASE_COMMIT
+    assert result.head_commit == SOURCE_HEAD
+    assert result.proposal == expected
+    assert ranges == [(BASE_COMMIT, SOURCE_HEAD)]
+    assert saved_states[0].last_observed_commit == SOURCE_HEAD
+    assert saved_states[0].last_proposed_commit == SOURCE_HEAD
+
+
 def test_controlled_run_fast_forwards_vault_before_validation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

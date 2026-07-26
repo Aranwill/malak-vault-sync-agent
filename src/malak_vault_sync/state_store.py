@@ -4,7 +4,7 @@ import json
 import os
 import shutil
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ class SyncState:
     source_repository: str
     source_branch: str
     last_observed_commit: str | None
+    last_proposed_commit: str | None
     last_applied_commit: str | None
     last_successful_run_id: str | None
     last_successful_run_at: str | None
@@ -29,10 +30,11 @@ class SyncState:
     @classmethod
     def initial(cls) -> "SyncState":
         return cls(
-            schema_version=1,
+            schema_version=2,
             source_repository="Aranwill/jarvis",
             source_branch="main",
             last_observed_commit=None,
+            last_proposed_commit=None,
             last_applied_commit=None,
             last_successful_run_id=None,
             last_successful_run_at=None,
@@ -50,6 +52,10 @@ class SyncState:
     ) -> "SyncState":
         timestamp = completed_at or datetime.now(UTC)
 
+        proposed_commit = self.last_proposed_commit
+        if self.last_observed_commit is None:
+            proposed_commit = observed_commit
+
         return SyncState(
             schema_version=self.schema_version,
             source_repository=self.source_repository,
@@ -57,6 +63,14 @@ class SyncState:
             last_observed_commit=_validate_commit_sha(
                 observed_commit,
                 "observed_commit",
+            ),
+            last_proposed_commit=(
+                _validate_commit_sha(
+                    proposed_commit,
+                    "last_proposed_commit",
+                )
+                if proposed_commit is not None
+                else None
             ),
             last_applied_commit=None,
             last_successful_run_id=_validate_non_empty_string(
@@ -71,8 +85,20 @@ class SyncState:
             status="success",
         )
 
+    def with_proposal_cursor(
+        self,
+        proposed_commit: str,
+    ) -> "SyncState":
+        return replace(
+            self,
+            last_proposed_commit=_validate_commit_sha(
+                proposed_commit,
+                "proposed_commit",
+            ),
+        )
 
-_ALLOWED_KEYS = {
+
+_V1_KEYS = {
     "schema_version",
     "source_repository",
     "source_branch",
@@ -82,6 +108,10 @@ _ALLOWED_KEYS = {
     "last_successful_run_at",
     "vault_commit_at_run",
     "status",
+}
+
+_V2_KEYS = _V1_KEYS | {
+    "last_proposed_commit",
 }
 
 _ALLOWED_STATUSES = {
@@ -115,7 +145,17 @@ def load_state(path: str | Path) -> SyncState:
             "State root must be a JSON object."
         )
 
-    unknown_keys = sorted(set(raw_data) - _ALLOWED_KEYS)
+    schema_version = _require_int(
+        raw_data,
+        "schema_version",
+    )
+    allowed_keys = (
+        _V1_KEYS
+        if schema_version == 1
+        else _V2_KEYS
+    )
+
+    unknown_keys = sorted(set(raw_data) - allowed_keys)
 
     if unknown_keys:
         raise StateStoreError(
@@ -123,7 +163,7 @@ def load_state(path: str | Path) -> SyncState:
             + ", ".join(unknown_keys)
         )
 
-    missing_keys = sorted(_ALLOWED_KEYS - set(raw_data))
+    missing_keys = sorted(allowed_keys - set(raw_data))
 
     if missing_keys:
         raise StateStoreError(
@@ -131,11 +171,20 @@ def load_state(path: str | Path) -> SyncState:
             + ", ".join(missing_keys)
         )
 
-    state = SyncState(
-        schema_version=_require_int(
+    last_proposed_commit = (
+        _recover_v1_proposal_cursor(
+            state_path,
             raw_data,
-            "schema_version",
-        ),
+        )
+        if schema_version == 1
+        else _require_optional_commit(
+            raw_data,
+            "last_proposed_commit",
+        )
+    )
+
+    state = SyncState(
+        schema_version=2,
         source_repository=_require_string(
             raw_data,
             "source_repository",
@@ -148,6 +197,7 @@ def load_state(path: str | Path) -> SyncState:
             raw_data,
             "last_observed_commit",
         ),
+        last_proposed_commit=last_proposed_commit,
         last_applied_commit=_require_optional_commit(
             raw_data,
             "last_applied_commit",
@@ -253,7 +303,7 @@ def save_state(
 
 
 def _validate_state(state: SyncState) -> None:
-    if state.schema_version != 1:
+    if state.schema_version != 2:
         raise StateStoreError(
             f"Unsupported state schema_version: "
             f"{state.schema_version}"
@@ -286,6 +336,7 @@ def _validate_state(state: SyncState) -> None:
             value is not None
             for value in (
                 state.last_observed_commit,
+                state.last_proposed_commit,
                 state.last_successful_run_id,
                 state.last_successful_run_at,
                 state.vault_commit_at_run,
@@ -299,6 +350,7 @@ def _validate_state(state: SyncState) -> None:
     if state.status == "success":
         required_values = (
             state.last_observed_commit,
+            state.last_proposed_commit,
             state.last_successful_run_id,
             state.last_successful_run_at,
             state.vault_commit_at_run,
@@ -309,6 +361,54 @@ def _validate_state(state: SyncState) -> None:
                 "success state requires complete "
                 "execution data."
             )
+
+
+def _recover_v1_proposal_cursor(
+    state_path: Path,
+    raw_data: dict[str, Any],
+) -> str | None:
+    current_commit = _require_optional_commit(
+        raw_data,
+        "last_observed_commit",
+    )
+    if current_commit is None:
+        return None
+
+    backup_path = state_path.with_suffix(
+        state_path.suffix + ".prev"
+    )
+    if not backup_path.is_file():
+        return current_commit
+
+    try:
+        backup_data = json.loads(
+            backup_path.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return current_commit
+
+    if not isinstance(backup_data, dict):
+        return current_commit
+    if backup_data.get("schema_version") != 1:
+        return current_commit
+    if backup_data.get("source_repository") != raw_data.get(
+        "source_repository"
+    ):
+        return current_commit
+    if backup_data.get("source_branch") != raw_data.get(
+        "source_branch"
+    ):
+        return current_commit
+
+    try:
+        previous_commit = _require_optional_commit(
+            backup_data,
+            "last_observed_commit",
+        )
+    except StateStoreError:
+        return current_commit
+
+    return previous_commit or current_commit
 
 
 def _require_string(
