@@ -110,6 +110,7 @@ def build_manifest(
     head_commit: str,
     changed_files: tuple[ChangedFile, ...],
     generated_at: datetime | None = None,
+    mode: str = "dry-run",
 ) -> EvidenceManifest:
     timestamp = generated_at or datetime.now(UTC)
 
@@ -135,7 +136,7 @@ def build_manifest(
             generated_at=timestamp.astimezone(UTC).isoformat(),
             python_version=platform.python_version(),
             platform=platform.platform(),
-            mode="dry-run",
+            mode=mode,
         ),
         source_snapshot=source_snapshot,
         vault_snapshot=vault_snapshot,

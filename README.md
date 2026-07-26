@@ -6,38 +6,38 @@ repositorio oficial de Malāk y el Malāk Project Vault.
 ## Estado
 
 ```text
-Fase 1 — cerrada
-Gates 0–9 — cerrados
-Read-only Operationalization — implementada
-Modo operativo — dry-run / solo lectura documental
+Fase 1 read-only — cerrada
+Controlled Vault Proposals — implementado
+Modos — dry-run / controlled-proposal
 ```
 
 El agente puede actualizar referencias remotas, detectar cambios nuevos en
 `Aranwill/jarvis/main`, generar evidencia verificable, resolver documentos
-candidatos, validar el Vault y persistir el último commit observado.
+candidatos y validar el Vault.
 
-No modifica Malāk ni el contenido del Vault.
+En `controlled-proposal` también puede preparar una actualización
+determinista del Vault en una rama aislada, crear primero el commit
+documental, generar después el informe auditable, crear el commit de
+auditoría, ejecutar push y abrir una PR draft.
 
 ## Autoridad
 
 ```text
 Agente:
-observa, compara, valida, registra estado y genera evidencia
+observa, compara, valida, registra estado y propone cambios documentales
 
 LLM:
 no utilizado
 
 Humano:
-revisa informes y conserva toda autoridad de escritura y aprobación
+revisa el diff y conserva toda autoridad de aprobación y merge
 ```
 
 El agente no puede:
 
 - modificar `Aranwill/jarvis`;
-- modificar archivos del Vault;
-- crear ramas o commits;
-- ejecutar `push`;
-- abrir, aprobar o fusionar pull requests;
+- escribir directamente en `main` del Vault;
+- aprobar o fusionar pull requests;
 - modificar snapshots históricos;
 - cerrar decisiones;
 - utilizar LLM;
@@ -48,10 +48,12 @@ El agente no puede:
 | Rol | Repositorio | Rama | Acceso |
 |---|---|---|---|
 | Fuente operativa | `Aranwill/jarvis` | `main` | fetch e inspección |
-| Vault derivado | `Aranwill/malak-project-vault` | `main` | fetch, inspección y validación local |
+| Vault derivado | `Aranwill/malak-project-vault` | `main` | lectura; propuesta en rama aislada cuando se habilita |
 
-`fetch` actualiza únicamente referencias remotas de Git. No ejecuta `pull`,
-`checkout`, `reset` ni modifica los working trees.
+`fetch` actualiza únicamente referencias remotas de Git. El modo
+`controlled-proposal` puede avanzar el `main` local y limpio del Vault
+solo mediante `fast-forward`; las propuestas se crean en un worktree
+temporal y nunca escriben directamente en `main` remoto.
 
 ## Requisitos
 
@@ -59,8 +61,11 @@ El agente no puede:
 - Git disponible localmente;
 - clones locales de ambos repositorios;
 - acceso de lectura a ambos remotos;
+- GitHub CLI autenticado y permisos de propuesta sobre el Vault para
+  `controlled-proposal`;
 - working trees en `main` y limpios;
-- Vault local alineado con `origin/main`.
+- historial local del Vault compatible con un `fast-forward` hacia
+  `origin/main`.
 
 ## Instalación de desarrollo
 
@@ -134,7 +139,10 @@ Las ejecuciones posteriores:
 5. resuelven documentos candidatos del Vault;
 6. validan rutas, Markdown, YAML y enlaces;
 7. generan evidencia e informe con SHA-256;
-8. guardan el nuevo estado solo después de completar el circuito.
+8. en `dry-run`, finalizan sin modificar el Vault;
+9. en `controlled-proposal`, crean el commit documental, el informe y
+   commit de auditoría, realizan push y abren una PR draft;
+10. guardan el nuevo estado solo después de completar el circuito.
 
 Salidas locales:
 
@@ -167,12 +175,16 @@ Códigos de salida:
 
 ## Automatización
 
-El comando `run-once` ya puede ser invocado por el Programador de tareas de
-Windows. La instalación del scheduler se realiza como un paso operativo
-separado, después de validar una ejecución en la PC del owner.
+El comando `run-once` puede ser invocado por el Programador de tareas de
+Windows. El script `scripts/install-scheduled-task.ps1` instala una
+invocación periódica sin mantener un daemon o servicio residente.
 
-El scheduler no concede autoridad adicional: cada corrida permanece en
-`dry-run` y solo genera estado, evidencia e informes locales.
+El scheduler no concede autoridad adicional. En `controlled-proposal`,
+cada cambio relevante produce una PR draft y el merge continúa reservado
+al propietario.
+
+La especificación operativa completa se encuentra en
+`docs/CONTROLLED_VAULT_PROPOSALS.md`.
 
 ## Pruebas
 

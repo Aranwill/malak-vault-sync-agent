@@ -100,7 +100,7 @@ def test_non_dry_run_mode_is_rejected(
 
     with pytest.raises(
         ConfigurationError,
-        match="Only mode 'dry-run' is allowed",
+        match="dry-run.*controlled-proposal",
     ):
         load_config(write_config(tmp_path, content))
 
@@ -177,5 +177,51 @@ def test_include_file_contents_is_rejected(
     with pytest.raises(
         ConfigurationError,
         match="Including file contents is not allowed",
+    ):
+        load_config(write_config(tmp_path, content))
+
+
+def test_load_controlled_proposal_config(
+    tmp_path: Path,
+) -> None:
+    content = VALID_CONFIG.replace(
+        "mode: dry-run",
+        "mode: controlled-proposal",
+    ) + """\
+
+proposal:
+  branch_prefix: agent/vault-sync
+  push: true
+  open_draft_pr: true
+  github_cli: gh
+"""
+
+    config = load_config(write_config(tmp_path, content))
+
+    assert config.mode == "controlled-proposal"
+    assert config.proposal is not None
+    assert config.proposal.branch_prefix == "agent/vault-sync"
+    assert config.proposal.push is True
+    assert config.proposal.open_draft_pr is True
+
+
+def test_controlled_proposal_requires_draft_pr(
+    tmp_path: Path,
+) -> None:
+    content = VALID_CONFIG.replace(
+        "mode: dry-run",
+        "mode: controlled-proposal",
+    ) + """\
+
+proposal:
+  branch_prefix: agent/vault-sync
+  push: true
+  open_draft_pr: false
+  github_cli: gh
+"""
+
+    with pytest.raises(
+        ConfigurationError,
+        match="require push and a draft PR",
     ):
         load_config(write_config(tmp_path, content))

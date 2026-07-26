@@ -37,6 +37,11 @@ from malak_vault_sync.validators import (
     validate_relative_links,
     validate_yaml,
 )
+from malak_vault_sync.vault_writer import (
+    VaultProposal,
+    prepare_vault_proposal,
+    synchronize_vault_checkout,
+)
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -64,6 +69,7 @@ class RunResult:
     audit_directory: Path
     conclusion: AuditConclusion
     bootstrap: bool
+    proposal: VaultProposal | None = None
 
 
 def run_once(
@@ -161,6 +167,35 @@ def _run_once_unlocked(
         require_clean=(
             config.security.require_clean_vault_worktree
         ),
+        require_remote_alignment=False,
+    )
+    if (
+        config.mode == "controlled-proposal"
+        and vault_snapshot.head != vault_snapshot.remote_head
+    ):
+        synchronize_vault_checkout(
+            config.vault.local_path,
+            remote=config.vault.remote,
+            base_branch=config.vault.branch,
+            expected_remote_head=vault_snapshot.remote_head,
+            timeout_seconds=timeout,
+        )
+        vault_snapshot = inspect_repository(
+            config.vault.local_path,
+            remote_ref=(
+                f"{config.vault.remote}/{config.vault.branch}"
+            ),
+            timeout_seconds=timeout,
+        )
+
+    _validate_repository_snapshot(
+        name="vault",
+        snapshot=vault_snapshot,
+        expected_repository=config.vault.repository,
+        expected_branch=config.vault.branch,
+        require_clean=(
+            config.security.require_clean_vault_worktree
+        ),
         require_remote_alignment=True,
     )
 
@@ -195,6 +230,7 @@ def _run_once_unlocked(
         base_commit=base_commit,
         head_commit=head_commit,
         changed_files=changed_files,
+        mode=config.mode,
     )
 
     evidence_directory = write_evidence_package(
@@ -228,6 +264,30 @@ def _run_once_unlocked(
         report,
     )
 
+    proposal: VaultProposal | None = None
+    if (
+        config.mode == "controlled-proposal"
+        and not bootstrap
+        and changed_files
+        and candidates
+        and report.conclusion is not AuditConclusion.FAIL
+    ):
+        if config.proposal is None:
+            raise RunnerError(
+                "Controlled proposal configuration is missing."
+            )
+        proposal = prepare_vault_proposal(
+            vault_root=config.vault.local_path,
+            evidence=evidence,
+            candidates=candidates,
+            report=report,
+            remote=config.vault.remote,
+            base_branch=config.vault.branch,
+            branch_prefix=config.proposal.branch_prefix,
+            github_cli=config.proposal.github_cli,
+            timeout_seconds=timeout,
+        )
+
     next_state = state.with_successful_observation(
         observed_commit=head_commit,
         vault_commit=vault_snapshot.head,
@@ -247,6 +307,7 @@ def _run_once_unlocked(
         audit_directory=audit_artifacts.directory,
         conclusion=report.conclusion,
         bootstrap=bootstrap,
+        proposal=proposal,
     )
 
 

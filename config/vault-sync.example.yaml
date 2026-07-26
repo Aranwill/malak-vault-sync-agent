@@ -33,3 +33,13 @@ security:
   require_clean_vault_worktree: true
   follow_symlinks: false
   include_file_contents: false
+
+# Para habilitar propuestas gobernadas, cambiar mode a:
+# mode: controlled-proposal
+# y descomentar esta sección. Requiere gh instalado y autenticado.
+#
+# proposal:
+#   branch_prefix: agent/vault-sync
+#   push: true
+#   open_draft_pr: true
+#   github_cli: gh
