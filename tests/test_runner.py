@@ -24,6 +24,7 @@ from malak_vault_sync.models import (
     AgentConfig,
     LimitsConfig,
     OutputConfig,
+    ProposalConfig,
     SecurityConfig,
     SourceConfig,
     StateConfig,
@@ -32,6 +33,7 @@ from malak_vault_sync.models import (
 from malak_vault_sync.runner import RunnerError, poll_runs,run_once
 from malak_vault_sync.state_store import SyncState
 from malak_vault_sync.execution_lock import ExecutionLockError
+from malak_vault_sync.vault_writer import VaultProposal
 
 
 SOURCE_HEAD = "a" * 40
@@ -104,6 +106,7 @@ def _make_manifest(
     base_commit: str,
     head_commit: str,
     changed_files: tuple[ChangedFile, ...],
+    mode: str = "dry-run",
 ) -> EvidenceManifest:
     return EvidenceManifest(
         schema_version=1,
@@ -112,7 +115,7 @@ def _make_manifest(
             generated_at="2026-07-22T12:00:00Z",
             python_version="3.12.0",
             platform="win32",
-            mode="dry-run",
+            mode=mode,
         ),
         source_snapshot=source_snapshot,
         vault_snapshot=vault_snapshot,
@@ -720,6 +723,78 @@ def test_run_once_rejects_existing_execution_lock(
     assert lock_path.read_text(
         encoding="utf-8",
     ) == "existing lock\n"
+
+
+def test_controlled_run_prepares_governed_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(
+        base_config,
+        mode="controlled-proposal",
+        proposal=ProposalConfig(
+            branch_prefix="agent/vault-sync",
+            push=True,
+            open_draft_pr=True,
+            github_cli="gh",
+        ),
+    )
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=BASE_COMMIT,
+        vault_commit=VAULT_HEAD,
+        run_id="previous-run",
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+    )
+    changed_files = (
+        ChangedFile(status="M", path="README.md"),
+    )
+    candidate = DocumentCandidate(
+        path="02-current-baseline/CURRENT_BASELINE.md",
+        priority="high",
+        disposition="review_required",
+        reasons=(),
+    )
+    candidate_path = config.vault.local_path / candidate.path
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text(
+        "---\ntitle: Baseline\n---\n\n# Baseline\n",
+        encoding="utf-8",
+    )
+    expected = VaultProposal(
+        branch="agent/vault-sync-aaaaaaaa",
+        content_commit="1" * 40,
+        audit_commit="2" * 40,
+        report_path="07-audits/vault-synchronization/report.md",
+        pull_request_url="https://github.com/example/pr/1",
+        modified_paths=(candidate.path,),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        lambda *args, **kwargs: changed_files,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "resolve_candidates",
+        lambda changed: (candidate,),
+    )
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        runner_module,
+        "prepare_vault_proposal",
+        lambda **kwargs: calls.append(kwargs) or expected,
+    )
+
+    result = run_once(config)
+
+    assert result.proposal == expected
+    assert calls[0]["candidates"] == (candidate,)
+    assert calls[0]["branch_prefix"] == "agent/vault-sync"
 
 def test_poll_runs_executes_run_once_repeatedly(
     monkeypatch: pytest.MonkeyPatch,

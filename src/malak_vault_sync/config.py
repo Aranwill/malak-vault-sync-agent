@@ -10,6 +10,7 @@ from malak_vault_sync.models import (
     AgentConfig,
     LimitsConfig,
     OutputConfig,
+    ProposalConfig,
     SecurityConfig,
     SourceConfig,
     StateConfig,
@@ -30,6 +31,7 @@ _ROOT_KEYS = {
     "output",
     "limits",
     "security",
+    "proposal",
 }
 
 _SOURCE_KEYS = {
@@ -69,6 +71,13 @@ _SECURITY_KEYS = {
     "include_file_contents",
 }
 
+_PROPOSAL_KEYS = {
+    "branch_prefix",
+    "push",
+    "open_draft_pr",
+    "github_cli",
+}
+
 
 def load_config(path: str | Path) -> AgentConfig:
     config_path = Path(path)
@@ -95,9 +104,9 @@ def load_config(path: str | Path) -> AgentConfig:
         )
 
     mode = _require_string(root, "mode")
-    if mode != "dry-run":
+    if mode not in {"dry-run", "controlled-proposal"}:
         raise ConfigurationError(
-            "Only mode 'dry-run' is allowed in Phase 1."
+            "Mode must be 'dry-run' or 'controlled-proposal'."
         )
 
     source_data = _require_section(root, "source")
@@ -187,7 +196,9 @@ def load_config(path: str | Path) -> AgentConfig:
         ),
     )
 
-    _validate_phase_1_constraints(source, vault, security)
+    proposal = _load_proposal(root, mode)
+
+    _validate_constraints(source, vault, security, proposal, mode)
 
     return AgentConfig(
         schema_version=schema_version,
@@ -198,6 +209,42 @@ def load_config(path: str | Path) -> AgentConfig:
         output=output,
         limits=limits,
         security=security,
+        proposal=proposal,
+    )
+
+
+def _load_proposal(
+    root: Mapping[str, Any],
+    mode: str,
+) -> ProposalConfig | None:
+    if mode == "dry-run":
+        if "proposal" in root:
+            raise ConfigurationError(
+                "The proposal section is not allowed in dry-run mode."
+            )
+        return None
+
+    proposal_data = _require_section(root, "proposal")
+    _reject_unknown_keys(
+        proposal_data,
+        _PROPOSAL_KEYS,
+        "proposal",
+    )
+
+    return ProposalConfig(
+        branch_prefix=_require_string(
+            proposal_data,
+            "branch_prefix",
+        ),
+        push=_require_bool(proposal_data, "push"),
+        open_draft_pr=_require_bool(
+            proposal_data,
+            "open_draft_pr",
+        ),
+        github_cli=_require_string(
+            proposal_data,
+            "github_cli",
+        ),
     )
 
 
@@ -359,39 +406,41 @@ def _require_relative_path(
     return path
 
 
-def _validate_phase_1_constraints(
+def _validate_constraints(
     source: SourceConfig,
     vault: VaultConfig,
     security: SecurityConfig,
+    proposal: ProposalConfig | None,
+    mode: str,
 ) -> None:
     if source.repository != "Aranwill/jarvis":
         raise ConfigurationError(
-            "Phase 1 source repository must be Aranwill/jarvis."
+            "Configured source repository must be Aranwill/jarvis."
         )
 
     if source.remote != "origin":
         raise ConfigurationError(
-            "Phase 1 source remote must be origin."
+            "Source remote must be origin."
         )
 
     if source.branch != "main":
         raise ConfigurationError(
-            "Phase 1 source branch must be main."
+            "Source branch must be main."
         )
 
     if vault.repository != "Aranwill/malak-project-vault":
         raise ConfigurationError(
-            "Phase 1 Vault repository is not allowed."
+            "Vault repository is not allowed."
         )
 
     if vault.branch != "main":
         raise ConfigurationError(
-            "Phase 1 Vault branch must be main."
+            "Vault branch must be main."
         )
 
     if vault.remote != "origin":
         raise ConfigurationError(
-            "Read-only Vault remote must be origin."
+            "Vault remote must be origin."
         )
 
     if source.local_path == vault.local_path:
@@ -401,10 +450,28 @@ def _validate_phase_1_constraints(
 
     if security.follow_symlinks:
         raise ConfigurationError(
-            "Following symlinks is not allowed in Phase 1."
+            "Following symlinks is not allowed."
         )
 
     if security.include_file_contents:
         raise ConfigurationError(
-            "Including file contents is not allowed in Gate 1."
+            "Including file contents is not allowed."
         )
+
+    if mode == "controlled-proposal":
+        assert proposal is not None
+
+        if not proposal.push or not proposal.open_draft_pr:
+            raise ConfigurationError(
+                "Controlled proposals require push and a draft PR."
+            )
+
+        if proposal.branch_prefix != "agent/vault-sync":
+            raise ConfigurationError(
+                "Proposal branch_prefix must be agent/vault-sync."
+            )
+
+        if proposal.github_cli != "gh":
+            raise ConfigurationError(
+                "Controlled proposals require the gh executable."
+            )

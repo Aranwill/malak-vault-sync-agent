@@ -50,6 +50,14 @@ class SecurityConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposalConfig:
+    branch_prefix: str
+    push: bool
+    open_draft_pr: bool
+    github_cli: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentConfig:
     schema_version: int
     mode: str
@@ -59,3 +67,4 @@ class AgentConfig:
     output: OutputConfig
     limits: LimitsConfig
     security: SecurityConfig
+    proposal: ProposalConfig | None = None

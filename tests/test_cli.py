@@ -86,7 +86,8 @@ def test_run_once_command_reports_operational_result(
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Read-only run completed." in captured.out
+    assert "Vault synchronization run completed." in captured.out
+    assert "proposal_created: false" in captured.out
     assert "changed_files: 1" in captured.out
     assert "document_candidates: 2" in captured.out
     assert "conclusion: pass" in captured.out

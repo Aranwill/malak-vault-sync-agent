@@ -13,6 +13,7 @@ from malak_vault_sync.execution_lock import ExecutionLockError
 from malak_vault_sync.git_inspector import GitInspectionError
 from malak_vault_sync.runner import RunnerError, run_once
 from malak_vault_sync.state_store import StateStoreError
+from malak_vault_sync.vault_writer import VaultProposalError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,14 +102,15 @@ def _run_once_command(config_path: Path) -> int:
         GitInspectionError,
         RunnerError,
         StateStoreError,
+        VaultProposalError,
     ) as exc:
         print(
-            f"Read-only run failed: {exc}",
+            f"Vault synchronization run failed: {exc}",
             file=sys.stderr,
         )
         return 2
 
-    print("Read-only run completed.")
+    print("Vault synchronization run completed.")
     print(f"bootstrap: {str(result.bootstrap).lower()}")
     print(f"base_commit: {result.base_commit}")
     print(f"head_commit: {result.head_commit}")
@@ -118,6 +120,18 @@ def _run_once_command(config_path: Path) -> int:
     print(f"conclusion: {result.conclusion.value}")
     print(f"evidence_directory: {result.evidence_directory}")
     print(f"audit_directory: {result.audit_directory}")
+    proposal = getattr(result, "proposal", None)
+    if proposal is None:
+        print("proposal_created: false")
+    else:
+        print("proposal_created: true")
+        print(f"proposal_branch: {proposal.branch}")
+        print(
+            f"proposal_content_commit: "
+            f"{proposal.content_commit}"
+        )
+        print(f"proposal_report: {proposal.report_path}")
+        print(f"proposal_pr: {proposal.pull_request_url}")
 
     if result.conclusion is AuditConclusion.FAIL:
         return 1
