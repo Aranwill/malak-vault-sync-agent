@@ -7,7 +7,8 @@ conceder autoridad de decisión ni merge al agente.
 
 Ante un cambio publicado en `Aranwill/jarvis/main`, el agente:
 
-1. actualiza las referencias remotas;
+1. actualiza las referencias remotas y, si el clon limpio del Vault quedó
+   detrás, avanza su `main` local únicamente mediante `fast-forward`;
 2. compara el nuevo HEAD con el último commit observado;
 3. resuelve únicamente documentos candidatos allowlisted;
 4. genera evidencia e informe local;
@@ -34,7 +35,8 @@ directamente en `main` del Vault y nunca aprueba o mergea la PR.
 - permisos para crear ramas, commits, push y PR draft en
   `Aranwill/malak-project-vault`;
 - clones locales limpios y ubicados en `main`;
-- Vault local alineado con `origin/main`.
+- historial local del Vault compatible con un `fast-forward` hacia
+  `origin/main`.
 
 Validar GitHub CLI:
 
@@ -84,6 +86,11 @@ Las ejecuciones posteriores solo crean una PR cuando:
 - existen candidatos documentales allowlisted;
 - no hay errores de validación;
 - no existe otra PR de sincronización abierta.
+
+Si el `push` de una propuesta funciona pero GitHub CLI no puede crear la
+PR draft, el agente elimina únicamente la rama remota de esa ejecución y
+no persiste el nuevo estado observado. La siguiente corrida puede
+reintentarlo sin reutilizar una rama huérfana.
 
 ## Detección programada
 

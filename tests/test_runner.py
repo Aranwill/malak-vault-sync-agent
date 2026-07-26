@@ -796,6 +796,87 @@ def test_controlled_run_prepares_governed_proposal(
     assert calls[0]["candidates"] == (candidate,)
     assert calls[0]["branch_prefix"] == "agent/vault-sync"
 
+
+def test_controlled_run_fast_forwards_vault_before_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(
+        base_config,
+        mode="controlled-proposal",
+        proposal=ProposalConfig(
+            branch_prefix="agent/vault-sync",
+            push=True,
+            open_draft_pr=True,
+            github_cli="gh",
+        ),
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+    remote_head = "e" * 40
+    source_snapshot = _make_snapshot(
+        config.source.local_path,
+        head=SOURCE_HEAD,
+        repository="Aranwill/jarvis",
+    )
+    vault_snapshots = iter(
+        (
+            _make_snapshot(
+                config.vault.local_path,
+                head=VAULT_HEAD,
+                remote_head=remote_head,
+                repository="Aranwill/malak-project-vault",
+            ),
+            _make_snapshot(
+                config.vault.local_path,
+                head=remote_head,
+                remote_head=remote_head,
+                repository="Aranwill/malak-project-vault",
+            ),
+        )
+    )
+
+    def fake_inspect(
+        repository_path: Path,
+        **kwargs,
+    ) -> RepositorySnapshot:
+        del kwargs
+        if repository_path == config.source.local_path:
+            return source_snapshot
+        return next(vault_snapshots)
+
+    synchronization_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        runner_module,
+        "inspect_repository",
+        fake_inspect,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "synchronize_vault_checkout",
+        lambda *args, **kwargs: synchronization_calls.append(
+            {"args": args, **kwargs}
+        ),
+    )
+
+    result = run_once(config)
+
+    assert result.vault_snapshot.head == remote_head
+    assert synchronization_calls == [
+        {
+            "args": (config.vault.local_path,),
+            "remote": "origin",
+            "base_branch": "main",
+            "expected_remote_head": remote_head,
+            "timeout_seconds": 60,
+        }
+    ]
+
+
 def test_poll_runs_executes_run_once_repeatedly(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

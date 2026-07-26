@@ -51,8 +51,9 @@ El agente no puede:
 | Vault derivado | `Aranwill/malak-project-vault` | `main` | lectura; propuesta en rama aislada cuando se habilita |
 
 `fetch` actualiza únicamente referencias remotas de Git. El modo
-`controlled-proposal` utiliza un worktree temporal y nunca cambia el
-working tree principal del Vault.
+`controlled-proposal` puede avanzar el `main` local y limpio del Vault
+solo mediante `fast-forward`; las propuestas se crean en un worktree
+temporal y nunca escriben directamente en `main` remoto.
 
 ## Requisitos
 
@@ -63,7 +64,8 @@ working tree principal del Vault.
 - GitHub CLI autenticado y permisos de propuesta sobre el Vault para
   `controlled-proposal`;
 - working trees en `main` y limpios;
-- Vault local alineado con `origin/main`.
+- historial local del Vault compatible con un `fast-forward` hacia
+  `origin/main`.
 
 ## Instalación de desarrollo
 

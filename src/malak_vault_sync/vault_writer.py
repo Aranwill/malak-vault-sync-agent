@@ -104,6 +104,7 @@ def prepare_vault_proposal(
             "Vault remote HEAD changed after evidence generation."
         )
 
+    branch_created = False
     with tempfile.TemporaryDirectory(
         prefix="malak-vault-proposal-"
     ) as temporary_directory:
@@ -126,6 +127,7 @@ def prepare_vault_proposal(
                 branch,
                 timeout_seconds=timeout_seconds,
             )
+            branch_created = True
 
             modified_paths = _write_candidate_projections(
                 worktree,
@@ -205,16 +207,28 @@ def prepare_vault_proposal(
                 timeout_seconds=timeout_seconds,
             )
 
-            pull_request_url = _open_draft_pr(
-                worktree,
-                github_cli=github_cli,
-                branch=branch,
-                base_branch=base_branch,
-                evidence=evidence,
-                content_commit=content_commit,
-                report_path=report_path,
-                timeout_seconds=timeout_seconds,
-            )
+            try:
+                pull_request_url = _open_draft_pr(
+                    worktree,
+                    github_cli=github_cli,
+                    branch=branch,
+                    base_branch=base_branch,
+                    evidence=evidence,
+                    content_commit=content_commit,
+                    report_path=report_path,
+                    timeout_seconds=timeout_seconds,
+                )
+            except VaultProposalError as exc:
+                _rollback_published_branch(
+                    worktree,
+                    remote=remote,
+                    branch=branch,
+                    timeout_seconds=timeout_seconds,
+                )
+                raise VaultProposalError(
+                    "Draft PR creation failed; the published proposal "
+                    "branch was rolled back."
+                ) from exc
         finally:
             _git(
                 vault_root,
@@ -224,6 +238,12 @@ def prepare_vault_proposal(
                 str(worktree),
                 timeout_seconds=timeout_seconds,
             )
+            if branch_created:
+                _delete_local_branch(
+                    vault_root,
+                    branch=branch,
+                    timeout_seconds=timeout_seconds,
+                )
 
     return VaultProposal(
         branch=branch,
@@ -233,6 +253,79 @@ def prepare_vault_proposal(
         pull_request_url=pull_request_url,
         modified_paths=modified_paths,
     )
+
+
+def synchronize_vault_checkout(
+    vault_root: Path,
+    *,
+    remote: str,
+    base_branch: str,
+    expected_remote_head: str,
+    timeout_seconds: int,
+) -> None:
+    """Fast-forward a clean Vault checkout to its verified remote HEAD."""
+
+    branch = _git(
+        vault_root,
+        "branch",
+        "--show-current",
+        timeout_seconds=timeout_seconds,
+    )
+    if branch != base_branch:
+        raise VaultProposalError(
+            f"Vault checkout branch changed before synchronization: {branch}."
+        )
+
+    status = _git(
+        vault_root,
+        "status",
+        "--short",
+        timeout_seconds=timeout_seconds,
+    )
+    if status:
+        raise VaultProposalError(
+            "Vault checkout must be clean before synchronization."
+        )
+
+    remote_ref = f"{remote}/{base_branch}"
+    remote_head = _git(
+        vault_root,
+        "rev-parse",
+        remote_ref,
+        timeout_seconds=timeout_seconds,
+    )
+    if remote_head != expected_remote_head:
+        raise VaultProposalError(
+            "Vault remote HEAD changed before local synchronization."
+        )
+
+    local_head = _git(
+        vault_root,
+        "rev-parse",
+        "HEAD",
+        timeout_seconds=timeout_seconds,
+    )
+    if local_head == remote_head:
+        return
+
+    _git(
+        vault_root,
+        "merge",
+        "--ff-only",
+        "--quiet",
+        remote_ref,
+        timeout_seconds=timeout_seconds,
+    )
+    synchronized_head = _git(
+        vault_root,
+        "rev-parse",
+        "HEAD",
+        timeout_seconds=timeout_seconds,
+    )
+    if synchronized_head != expected_remote_head:
+        raise VaultProposalError(
+            "Vault checkout did not reach the verified remote HEAD."
+        )
 
 
 def _write_candidate_projections(
@@ -859,6 +952,58 @@ def _open_draft_pr(
         cwd=worktree,
         timeout_seconds=timeout_seconds,
     )
+
+
+def _rollback_published_branch(
+    worktree: Path,
+    *,
+    remote: str,
+    branch: str,
+    timeout_seconds: int,
+) -> None:
+    if _BRANCH_PATTERN.fullmatch(branch) is None:
+        raise VaultProposalError(
+            f"Refusing to roll back an unsafe branch name: {branch}"
+        )
+
+    try:
+        _git(
+            worktree,
+            "push",
+            remote,
+            "--delete",
+            branch,
+            timeout_seconds=timeout_seconds,
+        )
+    except VaultProposalError as exc:
+        raise VaultProposalError(
+            "Draft PR creation failed and the published proposal branch "
+            f"could not be rolled back: {branch}."
+        ) from exc
+
+
+def _delete_local_branch(
+    vault_root: Path,
+    *,
+    branch: str,
+    timeout_seconds: int,
+) -> None:
+    if _BRANCH_PATTERN.fullmatch(branch) is None:
+        return
+
+    try:
+        _git(
+            vault_root,
+            "branch",
+            "--delete",
+            "--force",
+            branch,
+            timeout_seconds=timeout_seconds,
+        )
+    except VaultProposalError:
+        # The proposal result is authoritative even if local housekeeping
+        # cannot remove an already detached, agent-owned branch.
+        return
 
 
 def _git(

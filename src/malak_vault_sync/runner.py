@@ -40,6 +40,7 @@ from malak_vault_sync.validators import (
 from malak_vault_sync.vault_writer import (
     VaultProposal,
     prepare_vault_proposal,
+    synchronize_vault_checkout,
 )
 from collections.abc import Callable
 from typing import TypeVar
@@ -158,6 +159,35 @@ def _run_once_unlocked(
             config.security.require_clean_source_worktree
         ),
     )
+    _validate_repository_snapshot(
+        name="vault",
+        snapshot=vault_snapshot,
+        expected_repository=config.vault.repository,
+        expected_branch=config.vault.branch,
+        require_clean=(
+            config.security.require_clean_vault_worktree
+        ),
+        require_remote_alignment=False,
+    )
+    if (
+        config.mode == "controlled-proposal"
+        and vault_snapshot.head != vault_snapshot.remote_head
+    ):
+        synchronize_vault_checkout(
+            config.vault.local_path,
+            remote=config.vault.remote,
+            base_branch=config.vault.branch,
+            expected_remote_head=vault_snapshot.remote_head,
+            timeout_seconds=timeout,
+        )
+        vault_snapshot = inspect_repository(
+            config.vault.local_path,
+            remote_ref=(
+                f"{config.vault.remote}/{config.vault.branch}"
+            ),
+            timeout_seconds=timeout,
+        )
+
     _validate_repository_snapshot(
         name="vault",
         snapshot=vault_snapshot,
