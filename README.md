@@ -134,7 +134,8 @@ Las ejecuciones posteriores:
 
 1. actualizan `origin/main` de ambos repositorios;
 2. verifican identidad, rama, limpieza y alineación;
-3. comparan el último commit observado con el HEAD remoto de Malāk;
+3. comparan el cursor correspondiente al modo con el HEAD remoto de
+   Malāk;
 4. detectan modificaciones, altas, bajas y renombres;
 5. resuelven documentos candidatos del Vault;
 6. validan rutas, Markdown, YAML y enlaces;
@@ -143,6 +144,20 @@ Las ejecuciones posteriores:
 9. en `controlled-proposal`, crean el commit documental, el informe y
    commit de auditoría, realizan push y abren una PR draft;
 10. guardan el nuevo estado solo después de completar el circuito.
+
+El estado separa dos cursores:
+
+- `last_observed_commit` registra el último HEAD auditado por
+  `dry-run`;
+- `last_proposed_commit` registra hasta qué commit se evaluó
+  correctamente una propuesta controlada.
+
+Por esa separación, una previsualización `dry-run` no consume el rango
+pendiente. Una ejecución posterior en `controlled-proposal` vuelve a
+evaluar ese mismo rango y solo avanza su cursor cuando termina sin una
+conclusión `fail`. Los estados de esquema 1 se migran automáticamente al
+esquema 2; si existe el backup atómico `.prev`, se usa para recuperar el
+inicio pendiente de la última previsualización.
 
 Salidas locales:
 
