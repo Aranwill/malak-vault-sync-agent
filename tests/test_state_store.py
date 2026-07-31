@@ -17,6 +17,12 @@ from malak_vault_sync.state_store import (
 SOURCE_COMMIT = "a" * 40
 VAULT_COMMIT = "b" * 40
 PENDING_COMMIT = "c" * 40
+BASE_COMMIT = "d" * 40
+PROPOSAL_VAULT_COMMIT = "e" * 40
+PULL_REQUEST_URL = (
+    "https://github.com/Aranwill/"
+    "malak-project-vault/pull/17"
+)
 
 
 def test_load_missing_state_returns_initial(
@@ -34,6 +40,8 @@ def test_initial_state_has_expected_values() -> None:
     assert state.last_reconciled_commit is None
     assert state.pending_proposal_base_commit is None
     assert state.pending_proposal_commit is None
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
     assert state.source_repository == "Aranwill/jarvis"
     assert state.source_branch == "main"
     assert state.last_observed_commit is None
@@ -65,6 +73,8 @@ def test_successful_observation_builds_valid_state() -> None:
     assert state.last_reconciled_commit is None
     assert state.pending_proposal_base_commit is None
     assert state.pending_proposal_commit is None
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
     assert state.last_applied_commit is None
     assert state.last_successful_run_id == "run-001"
     assert state.last_successful_run_at == completed_at.isoformat()
@@ -147,6 +157,8 @@ def test_saved_json_is_deterministic(
     assert raw_data["last_reconciled_commit"] is None
     assert raw_data["pending_proposal_base_commit"] is None
     assert raw_data["pending_proposal_commit"] is None
+    assert raw_data["pending_proposal_vault_commit"] is None
+    assert raw_data["pending_proposal_pull_request_url"] is None
     assert payload.endswith("\n")
     assert raw_data["status"] == "never_run"
     assert raw_data["last_applied_commit"] is None
@@ -193,6 +205,8 @@ def test_v1_state_recovers_proposal_cursor_from_backup(
     assert state.last_reconciled_commit is None
     assert state.pending_proposal_base_commit == previous_commit
     assert state.pending_proposal_commit == SOURCE_COMMIT
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
 
 
 def test_v1_state_without_backup_uses_observed_as_baseline(
@@ -223,6 +237,8 @@ def test_v1_state_without_backup_uses_observed_as_baseline(
     assert state.last_reconciled_commit is None
     assert state.pending_proposal_base_commit == SOURCE_COMMIT
     assert state.pending_proposal_commit == SOURCE_COMMIT
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
 
 
 def test_corrupted_json_is_rejected(
@@ -420,6 +436,8 @@ def test_successful_observation_does_not_reconcile_commit() -> None:
     assert state.last_reconciled_commit is None
     assert state.pending_proposal_base_commit is None
     assert state.pending_proposal_commit is None
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
 
 
 def test_pending_proposal_does_not_advance_reconciled_cursor() -> None:
@@ -430,13 +448,23 @@ def test_pending_proposal_does_not_advance_reconciled_cursor() -> None:
     )
 
     pending_state = observed_state.with_pending_proposal(
-        base_commit=PENDING_COMMIT,
+        base_commit=BASE_COMMIT,
         proposed_commit=SOURCE_COMMIT,
+        vault_commit=PROPOSAL_VAULT_COMMIT,
+        pull_request_url=PULL_REQUEST_URL,
     )
 
     assert pending_state.last_reconciled_commit is None
-    assert pending_state.pending_proposal_base_commit == PENDING_COMMIT
+    assert pending_state.pending_proposal_base_commit == BASE_COMMIT
     assert pending_state.pending_proposal_commit == SOURCE_COMMIT
+    assert (
+        pending_state.pending_proposal_vault_commit
+        == PROPOSAL_VAULT_COMMIT
+    )
+    assert (
+        pending_state.pending_proposal_pull_request_url
+        == PULL_REQUEST_URL
+    )
 
 
 def test_pending_proposal_cannot_be_replaced() -> None:
@@ -446,8 +474,10 @@ def test_pending_proposal_cannot_be_replaced() -> None:
         run_id="run-001",
     )
     pending_state = observed_state.with_pending_proposal(
-        base_commit=PENDING_COMMIT,
+        base_commit=BASE_COMMIT,
         proposed_commit=SOURCE_COMMIT,
+        vault_commit=PROPOSAL_VAULT_COMMIT,
+        pull_request_url=PULL_REQUEST_URL,
     )
 
     with pytest.raises(
@@ -457,6 +487,11 @@ def test_pending_proposal_cannot_be_replaced() -> None:
         pending_state.with_pending_proposal(
             base_commit=SOURCE_COMMIT,
             proposed_commit=PENDING_COMMIT,
+            vault_commit="f" * 40,
+            pull_request_url=(
+                "https://github.com/Aranwill/"
+                "malak-project-vault/pull/18"
+            ),
         )
 
 
@@ -467,8 +502,10 @@ def test_accept_pending_proposal_advances_reconciled_cursor() -> None:
         run_id="run-001",
     )
     pending_state = observed_state.with_pending_proposal(
-        base_commit=PENDING_COMMIT,
+        base_commit=BASE_COMMIT,
         proposed_commit=SOURCE_COMMIT,
+        vault_commit=PROPOSAL_VAULT_COMMIT,
+        pull_request_url=PULL_REQUEST_URL,
     )
 
     reconciled_state = pending_state.accept_pending_proposal(
@@ -478,6 +515,8 @@ def test_accept_pending_proposal_advances_reconciled_cursor() -> None:
     assert reconciled_state.last_reconciled_commit == SOURCE_COMMIT
     assert reconciled_state.pending_proposal_base_commit is None
     assert reconciled_state.pending_proposal_commit is None
+    assert reconciled_state.pending_proposal_vault_commit is None
+    assert reconciled_state.pending_proposal_pull_request_url is None
 
 
 def test_reject_pending_proposal_preserves_reconciled_cursor() -> None:
@@ -486,18 +525,38 @@ def test_reject_pending_proposal_preserves_reconciled_cursor() -> None:
         vault_commit=VAULT_COMMIT,
         run_id="run-001",
     )
-    pending_state = observed_state.with_pending_proposal(
-        base_commit=PENDING_COMMIT,
+    reconciled_state = observed_state.with_pending_proposal(
+        base_commit=BASE_COMMIT,
         proposed_commit=SOURCE_COMMIT,
+        vault_commit=PROPOSAL_VAULT_COMMIT,
+        pull_request_url=PULL_REQUEST_URL,
+    ).accept_pending_proposal(
+        expected_commit=SOURCE_COMMIT,
+    )
+    next_observation = reconciled_state.with_successful_observation(
+        observed_commit=PENDING_COMMIT,
+        vault_commit=VAULT_COMMIT,
+        run_id="run-002",
+    )
+    pending_state = next_observation.with_pending_proposal(
+        base_commit=SOURCE_COMMIT,
+        proposed_commit=PENDING_COMMIT,
+        vault_commit="f" * 40,
+        pull_request_url=(
+            "https://github.com/Aranwill/"
+            "malak-project-vault/pull/18"
+        ),
     )
 
     rejected_state = pending_state.reject_pending_proposal(
-        expected_commit=SOURCE_COMMIT,
+        expected_commit=PENDING_COMMIT,
     )
 
-    assert rejected_state.last_reconciled_commit is None
+    assert rejected_state.last_reconciled_commit == SOURCE_COMMIT
     assert rejected_state.pending_proposal_base_commit is None
     assert rejected_state.pending_proposal_commit is None
+    assert rejected_state.pending_proposal_vault_commit is None
+    assert rejected_state.pending_proposal_pull_request_url is None
 
 
 def test_resolution_rejects_unexpected_pending_commit() -> None:
@@ -507,8 +566,10 @@ def test_resolution_rejects_unexpected_pending_commit() -> None:
         run_id="run-001",
     )
     pending_state = observed_state.with_pending_proposal(
-        base_commit=PENDING_COMMIT,
+        base_commit=BASE_COMMIT,
         proposed_commit=SOURCE_COMMIT,
+        vault_commit=PROPOSAL_VAULT_COMMIT,
+        pull_request_url=PULL_REQUEST_URL,
     )
 
     with pytest.raises(
@@ -540,50 +601,106 @@ def test_v2_state_migrates_proposal_as_pending_not_reconciled(
         json.dumps(payload),
         encoding="utf-8",
     )
+    previous_payload = {
+        **payload,
+        "last_observed_commit": BASE_COMMIT,
+        "last_proposed_commit": BASE_COMMIT,
+        "last_successful_run_id": "previous-run",
+    }
+    path.with_suffix(".json.prev").write_text(
+        json.dumps(previous_payload),
+        encoding="utf-8",
+    )
 
     state = load_state(path)
 
     assert state.schema_version == 3
     assert state.last_observed_commit == SOURCE_COMMIT
     assert state.last_reconciled_commit is None
-    assert state.pending_proposal_base_commit == SOURCE_COMMIT
+    assert state.pending_proposal_base_commit == BASE_COMMIT
     assert state.pending_proposal_commit == SOURCE_COMMIT
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
 
 
 @pytest.mark.parametrize(
     ("base_commit", "proposed_commit"),
-    (
-        (SOURCE_COMMIT, None),
+    [
+        (BASE_COMMIT, None),
         (None, SOURCE_COMMIT),
-    ),
+    ],
 )
 def test_incomplete_pending_proposal_range_is_rejected(
-    tmp_path: Path,
     base_commit: str | None,
     proposed_commit: str | None,
 ) -> None:
-    path = tmp_path / "sync-state.json"
-    payload = {
-        "schema_version": 3,
-        "source_repository": "Aranwill/jarvis",
-        "source_branch": "main",
-        "last_observed_commit": SOURCE_COMMIT,
-        "last_reconciled_commit": None,
-        "pending_proposal_base_commit": base_commit,
-        "pending_proposal_commit": proposed_commit,
-        "last_applied_commit": None,
-        "last_successful_run_id": "manual-run",
-        "last_successful_run_at": "2026-07-30T21:00:00+00:00",
-        "vault_commit_at_run": VAULT_COMMIT,
-        "status": "success",
-    }
-    path.write_text(
-        json.dumps(payload),
-        encoding="utf-8",
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=SOURCE_COMMIT,
+        vault_commit=VAULT_COMMIT,
+        run_id="run-001",
+    )
+    invalid_state = state.__class__(
+        schema_version=state.schema_version,
+        source_repository=state.source_repository,
+        source_branch=state.source_branch,
+        last_observed_commit=state.last_observed_commit,
+        last_reconciled_commit=state.last_reconciled_commit,
+        pending_proposal_base_commit=base_commit,
+        pending_proposal_commit=proposed_commit,
+        pending_proposal_vault_commit=None,
+        pending_proposal_pull_request_url=None,
+        last_applied_commit=state.last_applied_commit,
+        last_successful_run_id=state.last_successful_run_id,
+        last_successful_run_at=state.last_successful_run_at,
+        vault_commit_at_run=state.vault_commit_at_run,
+        status=state.status,
     )
 
     with pytest.raises(
         StateStoreError,
-        match="pending proposal range must contain both",
+        match="Pending proposal base and commit must both be set or null",
     ):
-        load_state(path)
+        save_state(Path("unused-sync-state.json"), invalid_state)
+
+
+@pytest.mark.parametrize(
+    ("base_commit", "proposed_commit", "vault_commit", "pr_url"),
+    [
+        (None, None, PROPOSAL_VAULT_COMMIT, PULL_REQUEST_URL),
+        (BASE_COMMIT, SOURCE_COMMIT, PROPOSAL_VAULT_COMMIT, None),
+        (BASE_COMMIT, SOURCE_COMMIT, None, PULL_REQUEST_URL),
+    ],
+)
+def test_incomplete_pending_proposal_identity_is_rejected(
+    base_commit: str | None,
+    proposed_commit: str | None,
+    vault_commit: str | None,
+    pr_url: str | None,
+) -> None:
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=SOURCE_COMMIT,
+        vault_commit=VAULT_COMMIT,
+        run_id="run-001",
+    )
+    invalid_state = state.__class__(
+        schema_version=state.schema_version,
+        source_repository=state.source_repository,
+        source_branch=state.source_branch,
+        last_observed_commit=state.last_observed_commit,
+        last_reconciled_commit=state.last_reconciled_commit,
+        pending_proposal_base_commit=base_commit,
+        pending_proposal_commit=proposed_commit,
+        pending_proposal_vault_commit=vault_commit,
+        pending_proposal_pull_request_url=pr_url,
+        last_applied_commit=state.last_applied_commit,
+        last_successful_run_id=state.last_successful_run_id,
+        last_successful_run_at=state.last_successful_run_at,
+        vault_commit_at_run=state.vault_commit_at_run,
+        status=state.status,
+    )
+
+    with pytest.raises(
+        StateStoreError,
+        match="Pending proposal identity must be complete",
+    ):
+        save_state(Path("unused-sync-state.json"), invalid_state)

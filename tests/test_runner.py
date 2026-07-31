@@ -42,6 +42,11 @@ VAULT_HEAD = "c" * 40
 RUN_ID = "20260722T120000Z_aaaaaaaa_bbbbbbbb"
 REMOTE_SOURCE_HEAD = "d" * 40
 PREVIOUS_COMMIT = "e" * 40
+PENDING_VAULT_COMMIT = "f" * 40
+PENDING_PR_URL = (
+    "https://github.com/Aranwill/"
+    "malak-project-vault/pull/17"
+)
 
 
 def _make_reconciled_state(
@@ -56,6 +61,8 @@ def _make_reconciled_state(
     state = state.with_pending_proposal(
         base_commit=PREVIOUS_COMMIT,
         proposed_commit=BASE_COMMIT,
+        vault_commit=PENDING_VAULT_COMMIT,
+        pull_request_url=PENDING_PR_URL,
     ).accept_pending_proposal(
         expected_commit=BASE_COMMIT,
     )
@@ -800,6 +807,8 @@ def test_controlled_bootstrap_does_not_create_pending_proposal(
     assert saved_states[0].last_reconciled_commit is None
     assert saved_states[0].pending_proposal_base_commit is None
     assert saved_states[0].pending_proposal_commit is None
+    assert saved_states[0].pending_proposal_vault_commit is None
+    assert saved_states[0].pending_proposal_pull_request_url is None
 
 
 def test_controlled_run_requires_reconciled_cursor(
@@ -837,6 +846,8 @@ def test_controlled_run_rejects_unresolved_pending_proposal(
     ).with_pending_proposal(
         base_commit=BASE_COMMIT,
         proposed_commit=SOURCE_HEAD,
+        vault_commit=PENDING_VAULT_COMMIT,
+        pull_request_url=PENDING_PR_URL,
     )
     _install_common_stubs(
         monkeypatch,
@@ -890,6 +901,8 @@ def test_controlled_run_without_proposal_does_not_mark_range_pending(
     assert saved_states[0].last_reconciled_commit == BASE_COMMIT
     assert saved_states[0].pending_proposal_base_commit is None
     assert saved_states[0].pending_proposal_commit is None
+    assert saved_states[0].pending_proposal_vault_commit is None
+    assert saved_states[0].pending_proposal_pull_request_url is None
 
 
 def test_controlled_run_prepares_governed_proposal(
@@ -933,7 +946,10 @@ def test_controlled_run_prepares_governed_proposal(
         content_commit="1" * 40,
         audit_commit="2" * 40,
         report_path="07-audits/vault-synchronization/report.md",
-        pull_request_url="https://github.com/example/pr/1",
+        pull_request_url=(
+            "https://github.com/Aranwill/"
+            "malak-project-vault/pull/17"
+        ),
         modified_paths=(candidate.path,),
     )
     monkeypatch.setattr(
@@ -967,6 +983,11 @@ def test_controlled_run_prepares_governed_proposal(
     assert saved_states[0].last_reconciled_commit == BASE_COMMIT
     assert saved_states[0].pending_proposal_base_commit == BASE_COMMIT
     assert saved_states[0].pending_proposal_commit == SOURCE_HEAD
+    assert saved_states[0].pending_proposal_vault_commit == expected.audit_commit
+    assert (
+        saved_states[0].pending_proposal_pull_request_url
+        == expected.pull_request_url
+    )
 
 
 def test_controlled_run_promotes_range_after_dry_run(
@@ -1012,7 +1033,10 @@ def test_controlled_run_promotes_range_after_dry_run(
         content_commit="1" * 40,
         audit_commit="2" * 40,
         report_path="07-audits/vault-synchronization/report.md",
-        pull_request_url="https://github.com/example/pr/1",
+        pull_request_url=(
+            "https://github.com/Aranwill/"
+            "malak-project-vault/pull/17"
+        ),
         modified_paths=(candidate.path,),
     )
     ranges: list[tuple[str, str]] = []
@@ -1061,6 +1085,11 @@ def test_controlled_run_promotes_range_after_dry_run(
     assert saved_states[0].last_reconciled_commit == BASE_COMMIT
     assert saved_states[0].pending_proposal_base_commit == BASE_COMMIT
     assert saved_states[0].pending_proposal_commit == SOURCE_HEAD
+    assert saved_states[0].pending_proposal_vault_commit == expected.audit_commit
+    assert (
+        saved_states[0].pending_proposal_pull_request_url
+        == expected.pull_request_url
+    )
 
 
 def test_controlled_run_fast_forwards_vault_before_validation(

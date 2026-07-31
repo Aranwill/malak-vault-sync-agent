@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import malak_vault_sync.cli as cli_module
 from malak_vault_sync.audit import AuditConclusion
 from malak_vault_sync.cli import main
+from malak_vault_sync.execution_lock import ExecutionLockError
 
 
 def test_validate_config_command_succeeds(
@@ -92,3 +93,113 @@ def test_run_once_command_reports_operational_result(
     assert "document_candidates: 2" in captured.out
     assert "conclusion: pass" in captured.out
     assert captured.err == ""
+
+
+def test_accept_proposal_command_delegates_human_decision(
+    monkeypatch,
+    capsys,
+) -> None:
+    config = object()
+    calls: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda path: config,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "accept_proposal",
+        lambda loaded_config, *, expected_commit: calls.append(
+            (loaded_config, expected_commit)
+        ),
+        raising=False,
+    )
+
+    expected_commit = "a" * 40
+    result = main(
+        [
+            "accept-proposal",
+            "--config",
+            "config.local.yaml",
+            "--expected-commit",
+            expected_commit,
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert calls == [(config, expected_commit)]
+    assert "Proposal accepted." in captured.out
+    assert captured.err == ""
+
+
+def test_reject_proposal_command_delegates_human_decision(
+    monkeypatch,
+    capsys,
+) -> None:
+    config = object()
+    calls: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda path: config,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "reject_proposal",
+        lambda loaded_config, *, expected_commit: calls.append(
+            (loaded_config, expected_commit)
+        ),
+        raising=False,
+    )
+
+    expected_commit = "b" * 40
+    result = main(
+        [
+            "reject-proposal",
+            "--config",
+            "config.local.yaml",
+            "--expected-commit",
+            expected_commit,
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert calls == [(config, expected_commit)]
+    assert "Proposal rejected." in captured.out
+    assert captured.err == ""
+
+
+def test_proposal_resolution_reports_execution_lock_error(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda path: object(),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "accept_proposal",
+        lambda config, *, expected_commit: (_ for _ in ()).throw(
+            ExecutionLockError("Execution lock already exists")
+        ),
+    )
+
+    result = main(
+        [
+            "accept-proposal",
+            "--config",
+            "config.local.yaml",
+            "--expected-commit",
+            "a" * 40,
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == ""
+    assert "Proposal reconciliation failed:" in captured.err
+    assert "Execution lock already exists" in captured.err

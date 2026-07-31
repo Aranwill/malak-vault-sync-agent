@@ -314,6 +314,8 @@ def _run_once_unlocked(
         next_state = next_state.with_pending_proposal(
             base_commit=base_commit,
             proposed_commit=head_commit,
+            vault_commit=proposal.audit_commit,
+            pull_request_url=proposal.pull_request_url,
         )
     save_state(config.state.path, next_state)
 
