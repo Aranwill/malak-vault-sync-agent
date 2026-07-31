@@ -105,6 +105,23 @@ def _run_once_unlocked(
     state = load_state(config.state.path)
     timeout = config.limits.command_timeout_seconds
 
+    bootstrap = state.last_observed_commit is None
+    if config.mode == "controlled-proposal":
+        if (
+            state.pending_proposal_base_commit is not None
+            or state.pending_proposal_commit is not None
+        ):
+            raise RunnerError(
+                "A pending proposal must be resolved before "
+                "creating another proposal."
+            )
+
+        if not bootstrap and state.last_reconciled_commit is None:
+            raise RunnerError(
+                "Controlled proposal mode requires a human-reconciled "
+                "commit cursor."
+            )
+
     if config.source.fetch:
         validate_origin_repository(
             get_origin_url(
@@ -199,14 +216,10 @@ def _run_once_unlocked(
         require_remote_alignment=True,
     )
 
-    bootstrap = state.last_observed_commit is None
     if bootstrap:
         base_commit = source_snapshot.remote_head
     elif config.mode == "controlled-proposal":
-        base_commit = (
-            state.last_proposed_commit
-            or state.last_observed_commit
-        )
+        base_commit = state.last_reconciled_commit
     else:
         base_commit = state.last_observed_commit
     head_commit = source_snapshot.remote_head
@@ -297,15 +310,12 @@ def _run_once_unlocked(
         vault_commit=vault_snapshot.head,
         run_id=evidence.execution.run_id,
     )
-    if (
-        bootstrap
-        or (
-            config.mode == "controlled-proposal"
-            and report.conclusion is not AuditConclusion.FAIL
-        )
-    ):
-        next_state = next_state.with_proposal_cursor(
-            head_commit
+    if proposal is not None:
+        next_state = next_state.with_pending_proposal(
+            base_commit=base_commit,
+            proposed_commit=head_commit,
+            vault_commit=proposal.audit_commit,
+            pull_request_url=proposal.pull_request_url,
         )
     save_state(config.state.path, next_state)
 

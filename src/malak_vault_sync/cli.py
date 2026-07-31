@@ -11,6 +11,11 @@ from malak_vault_sync.config import ConfigurationError, load_config
 from malak_vault_sync.evidence import EvidenceError
 from malak_vault_sync.execution_lock import ExecutionLockError
 from malak_vault_sync.git_inspector import GitInspectionError
+from malak_vault_sync.proposal_reconciliation import (
+    ProposalReconciliationError,
+    accept_proposal,
+    reject_proposal,
+)
 from malak_vault_sync.runner import RunnerError, run_once
 from malak_vault_sync.state_store import StateStoreError
 from malak_vault_sync.vault_writer import VaultProposalError
@@ -53,6 +58,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the YAML configuration file.",
     )
 
+    for command, help_text in (
+        (
+            "accept-proposal",
+            "Accept a pending proposal after its PR was merged.",
+        ),
+        (
+            "reject-proposal",
+            "Reject a pending proposal after its PR closed unmerged.",
+        ),
+    ):
+        resolution_parser = subparsers.add_parser(
+            command,
+            help=help_text,
+        )
+        resolution_parser.add_argument(
+            "--config",
+            type=Path,
+            required=True,
+            help="Path to the YAML configuration file.",
+        )
+        resolution_parser.add_argument(
+            "--expected-commit",
+            required=True,
+            help="Expected pending source commit SHA.",
+        )
+
     return parser
 
 
@@ -65,6 +96,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run-once":
         return _run_once_command(args.config)
+
+    if args.command == "accept-proposal":
+        return _run_proposal_resolution(
+            args.config,
+            expected_commit=args.expected_commit,
+            accept=True,
+        )
+
+    if args.command == "reject-proposal":
+        return _run_proposal_resolution(
+            args.config,
+            expected_commit=args.expected_commit,
+            accept=False,
+        )
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
@@ -135,6 +180,44 @@ def _run_once_command(config_path: Path) -> int:
 
     if result.conclusion is AuditConclusion.FAIL:
         return 1
+
+    return 0
+
+
+def _run_proposal_resolution(
+    config_path: Path,
+    *,
+    expected_commit: str,
+    accept: bool,
+) -> int:
+    try:
+        config = load_config(config_path)
+        if accept:
+            accept_proposal(
+                config,
+                expected_commit=expected_commit,
+            )
+        else:
+            reject_proposal(
+                config,
+                expected_commit=expected_commit,
+            )
+    except (
+        ConfigurationError,
+        ExecutionLockError,
+        ProposalReconciliationError,
+        StateStoreError,
+    ) as exc:
+        print(
+            f"Proposal reconciliation failed: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if accept:
+        print("Proposal accepted.")
+    else:
+        print("Proposal rejected.")
 
     return 0
 

@@ -20,7 +20,11 @@ class SyncState:
     source_repository: str
     source_branch: str
     last_observed_commit: str | None
-    last_proposed_commit: str | None
+    last_reconciled_commit: str | None
+    pending_proposal_base_commit: str | None
+    pending_proposal_commit: str | None
+    pending_proposal_vault_commit: str | None
+    pending_proposal_pull_request_url: str | None
     last_applied_commit: str | None
     last_successful_run_id: str | None
     last_successful_run_at: str | None
@@ -30,11 +34,15 @@ class SyncState:
     @classmethod
     def initial(cls) -> "SyncState":
         return cls(
-            schema_version=2,
+            schema_version=3,
             source_repository="Aranwill/jarvis",
             source_branch="main",
             last_observed_commit=None,
-            last_proposed_commit=None,
+            last_reconciled_commit=None,
+            pending_proposal_base_commit=None,
+            pending_proposal_commit=None,
+            pending_proposal_vault_commit=None,
+            pending_proposal_pull_request_url=None,
             last_applied_commit=None,
             last_successful_run_id=None,
             last_successful_run_at=None,
@@ -52,25 +60,12 @@ class SyncState:
     ) -> "SyncState":
         timestamp = completed_at or datetime.now(UTC)
 
-        proposed_commit = self.last_proposed_commit
-        if self.last_observed_commit is None:
-            proposed_commit = observed_commit
-
-        return SyncState(
-            schema_version=self.schema_version,
-            source_repository=self.source_repository,
-            source_branch=self.source_branch,
+        return replace(
+            self,
+            schema_version=3,
             last_observed_commit=_validate_commit_sha(
                 observed_commit,
                 "observed_commit",
-            ),
-            last_proposed_commit=(
-                _validate_commit_sha(
-                    proposed_commit,
-                    "last_proposed_commit",
-                )
-                if proposed_commit is not None
-                else None
             ),
             last_applied_commit=None,
             last_successful_run_id=_validate_non_empty_string(
@@ -85,17 +80,100 @@ class SyncState:
             status="success",
         )
 
-    def with_proposal_cursor(
+    def with_pending_proposal(
         self,
+        *,
+        base_commit: str,
         proposed_commit: str,
+        vault_commit: str,
+        pull_request_url: str,
     ) -> "SyncState":
+        if (
+            self.pending_proposal_base_commit is not None
+            or self.pending_proposal_commit is not None
+            or self.pending_proposal_vault_commit is not None
+            or self.pending_proposal_pull_request_url is not None
+        ):
+            raise StateStoreError(
+                "A pending proposal already exists."
+            )
+
         return replace(
             self,
-            last_proposed_commit=_validate_commit_sha(
+            pending_proposal_base_commit=_validate_commit_sha(
+                base_commit,
+                "base_commit",
+            ),
+            pending_proposal_commit=_validate_commit_sha(
                 proposed_commit,
                 "proposed_commit",
             ),
+            pending_proposal_vault_commit=_validate_commit_sha(
+                vault_commit,
+                "vault_commit",
+            ),
+            pending_proposal_pull_request_url=(
+                _validate_pull_request_url(pull_request_url)
+            ),
         )
+
+    def accept_pending_proposal(
+        self,
+        *,
+        expected_commit: str,
+    ) -> "SyncState":
+        pending_commit = self._require_expected_pending_commit(
+            expected_commit
+        )
+
+        return replace(
+            self,
+            last_reconciled_commit=pending_commit,
+            pending_proposal_base_commit=None,
+            pending_proposal_commit=None,
+            pending_proposal_vault_commit=None,
+            pending_proposal_pull_request_url=None,
+        )
+
+    def reject_pending_proposal(
+        self,
+        *,
+        expected_commit: str,
+    ) -> "SyncState":
+        self._require_expected_pending_commit(expected_commit)
+
+        return replace(
+            self,
+            pending_proposal_base_commit=None,
+            pending_proposal_commit=None,
+            pending_proposal_vault_commit=None,
+            pending_proposal_pull_request_url=None,
+        )
+
+    def _require_expected_pending_commit(
+        self,
+        expected_commit: str,
+    ) -> str:
+        normalized_expected = _validate_commit_sha(
+            expected_commit,
+            "expected_commit",
+        )
+
+        if (
+            self.pending_proposal_base_commit is None
+            or self.pending_proposal_commit is None
+        ):
+            raise StateStoreError(
+                "No pending proposal exists."
+            )
+
+        if self.pending_proposal_commit != normalized_expected:
+            raise StateStoreError(
+                "The pending proposal commit does not match "
+                "the expected commit."
+            )
+
+        return self.pending_proposal_commit
 
 
 _V1_KEYS = {
@@ -112,6 +190,15 @@ _V1_KEYS = {
 
 _V2_KEYS = _V1_KEYS | {
     "last_proposed_commit",
+}
+
+_V3_KEYS = (_V1_KEYS - {"last_observed_commit"}) | {
+    "last_observed_commit",
+    "last_reconciled_commit",
+    "pending_proposal_base_commit",
+    "pending_proposal_commit",
+    "pending_proposal_vault_commit",
+    "pending_proposal_pull_request_url",
 }
 
 _ALLOWED_STATUSES = {
@@ -149,11 +236,17 @@ def load_state(path: str | Path) -> SyncState:
         raw_data,
         "schema_version",
     )
-    allowed_keys = (
-        _V1_KEYS
-        if schema_version == 1
-        else _V2_KEYS
-    )
+
+    if schema_version == 1:
+        allowed_keys = _V1_KEYS
+    elif schema_version == 2:
+        allowed_keys = _V2_KEYS
+    elif schema_version == 3:
+        allowed_keys = _V3_KEYS
+    else:
+        raise StateStoreError(
+            f"Unsupported state schema_version: {schema_version}"
+        )
 
     unknown_keys = sorted(set(raw_data) - allowed_keys)
 
@@ -171,20 +264,72 @@ def load_state(path: str | Path) -> SyncState:
             + ", ".join(missing_keys)
         )
 
-    last_proposed_commit = (
-        _recover_v1_proposal_cursor(
-            state_path,
-            raw_data,
+    if schema_version == 1:
+        pending_proposal_base_commit = (
+            _recover_v1_proposal_cursor(
+                state_path,
+                raw_data,
+            )
         )
-        if schema_version == 1
-        else _require_optional_commit(
+        pending_proposal_commit = _require_optional_commit(
             raw_data,
-            "last_proposed_commit",
+            "last_observed_commit",
         )
-    )
+        last_reconciled_commit = None
+        pending_proposal_vault_commit = None
+        pending_proposal_pull_request_url = None
+    elif schema_version == 2:
+        pending_proposal_commit = (
+            _require_optional_commit(
+                raw_data,
+                "last_proposed_commit",
+            )
+        )
+        pending_proposal_base_commit = (
+            _recover_v2_proposal_base(
+                state_path,
+                raw_data,
+            )
+            if pending_proposal_commit is not None
+            else None
+        )
+        last_reconciled_commit = None
+        pending_proposal_vault_commit = None
+        pending_proposal_pull_request_url = None
+    else:
+        pending_proposal_base_commit = (
+            _require_optional_commit(
+                raw_data,
+                "pending_proposal_base_commit",
+            )
+        )
+        pending_proposal_commit = (
+            _require_optional_commit(
+                raw_data,
+                "pending_proposal_commit",
+            )
+        )
+        last_reconciled_commit = (
+            _require_optional_commit(
+                raw_data,
+                "last_reconciled_commit",
+            )
+        )
+        pending_proposal_vault_commit = (
+            _require_optional_commit(
+                raw_data,
+                "pending_proposal_vault_commit",
+            )
+        )
+        pending_proposal_pull_request_url = (
+            _require_optional_pull_request_url(
+                raw_data,
+                "pending_proposal_pull_request_url",
+            )
+        )
 
     state = SyncState(
-        schema_version=2,
+        schema_version=3,
         source_repository=_require_string(
             raw_data,
             "source_repository",
@@ -197,7 +342,17 @@ def load_state(path: str | Path) -> SyncState:
             raw_data,
             "last_observed_commit",
         ),
-        last_proposed_commit=last_proposed_commit,
+        last_reconciled_commit=last_reconciled_commit,
+        pending_proposal_base_commit=(
+            pending_proposal_base_commit
+        ),
+        pending_proposal_commit=pending_proposal_commit,
+        pending_proposal_vault_commit=(
+            pending_proposal_vault_commit
+        ),
+        pending_proposal_pull_request_url=(
+            pending_proposal_pull_request_url
+        ),
         last_applied_commit=_require_optional_commit(
             raw_data,
             "last_applied_commit",
@@ -303,7 +458,7 @@ def save_state(
 
 
 def _validate_state(state: SyncState) -> None:
-    if state.schema_version != 2:
+    if state.schema_version != 3:
         raise StateStoreError(
             f"Unsupported state schema_version: "
             f"{state.schema_version}"
@@ -336,7 +491,11 @@ def _validate_state(state: SyncState) -> None:
             value is not None
             for value in (
                 state.last_observed_commit,
-                state.last_proposed_commit,
+                state.last_reconciled_commit,
+                state.pending_proposal_base_commit,
+                state.pending_proposal_commit,
+                state.pending_proposal_vault_commit,
+                state.pending_proposal_pull_request_url,
                 state.last_successful_run_id,
                 state.last_successful_run_at,
                 state.vault_commit_at_run,
@@ -347,10 +506,32 @@ def _validate_state(state: SyncState) -> None:
                 "successful execution data."
             )
 
+    pending_range = (
+        state.pending_proposal_base_commit,
+        state.pending_proposal_commit,
+    )
+    if sum(value is not None for value in pending_range) == 1:
+        raise StateStoreError(
+            "Pending proposal base and commit must both be set or null."
+        )
+
+    pending_identity = (
+        state.pending_proposal_vault_commit,
+        state.pending_proposal_pull_request_url,
+    )
+    identity_values = sum(
+        value is not None for value in pending_identity
+    )
+    range_exists = all(value is not None for value in pending_range)
+    if identity_values == 1 or (identity_values == 2 and not range_exists):
+        raise StateStoreError(
+            "Pending proposal identity must be complete and belong "
+            "to a pending proposal range."
+        )
+
     if state.status == "success":
         required_values = (
             state.last_observed_commit,
-            state.last_proposed_commit,
             state.last_successful_run_id,
             state.last_successful_run_at,
             state.vault_commit_at_run,
@@ -409,6 +590,63 @@ def _recover_v1_proposal_cursor(
         return current_commit
 
     return previous_commit or current_commit
+
+
+def _recover_v2_proposal_base(
+    state_path: Path,
+    raw_data: dict[str, Any],
+) -> str:
+    current_cursor = _require_optional_commit(
+        raw_data,
+        "last_proposed_commit",
+    )
+    if current_cursor is None:
+        raise StateStoreError(
+            "Cannot recover a v2 proposal base without a proposal cursor."
+        )
+
+    backup_path = state_path.with_suffix(
+        state_path.suffix + ".prev"
+    )
+    if not backup_path.is_file():
+        return current_cursor
+
+    try:
+        backup_data = json.loads(
+            backup_path.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return current_cursor
+
+    if not isinstance(backup_data, dict):
+        return current_cursor
+    if backup_data.get("source_repository") != raw_data.get(
+        "source_repository"
+    ):
+        return current_cursor
+    if backup_data.get("source_branch") != raw_data.get(
+        "source_branch"
+    ):
+        return current_cursor
+
+    backup_schema = backup_data.get("schema_version")
+    try:
+        if backup_schema == 2:
+            previous_cursor = _require_optional_commit(
+                backup_data,
+                "last_proposed_commit",
+            )
+        elif backup_schema == 1:
+            previous_cursor = _require_optional_commit(
+                backup_data,
+                "last_observed_commit",
+            )
+        else:
+            return current_cursor
+    except StateStoreError:
+        return current_cursor
+
+    return previous_cursor or current_cursor
 
 
 def _require_string(
@@ -500,6 +738,43 @@ def _require_optional_timestamp(
     return value
 
 
+def _require_optional_pull_request_url(
+    data: dict[str, Any],
+    key: str,
+) -> str | None:
+    value = data.get(key)
+
+    if value is None:
+        return None
+
+    if not isinstance(value, str):
+        raise StateStoreError(
+            f"Expected pull request URL or null: {key}"
+        )
+
+    return _validate_pull_request_url(value)
+
+
+def _validate_pull_request_url(value: str) -> str:
+    normalized = value.strip()
+    prefix = (
+        "https://github.com/Aranwill/"
+        "malak-project-vault/pull/"
+    )
+    number = normalized.removeprefix(prefix)
+
+    if (
+        not normalized.startswith(prefix)
+        or not number.isdigit()
+        or int(number) < 1
+    ):
+        raise StateStoreError(
+            "Invalid pending proposal pull request URL."
+        )
+
+    return normalized
+
+
 def _validate_commit_sha(
     value: str,
     field_name: str,
@@ -521,7 +796,6 @@ def _validate_commit_sha(
         )
 
     return normalized
-
 
 def _validate_non_empty_string(
     value: str,

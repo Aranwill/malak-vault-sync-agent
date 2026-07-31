@@ -41,6 +41,40 @@ BASE_COMMIT = "b" * 40
 VAULT_HEAD = "c" * 40
 RUN_ID = "20260722T120000Z_aaaaaaaa_bbbbbbbb"
 REMOTE_SOURCE_HEAD = "d" * 40
+PREVIOUS_COMMIT = "e" * 40
+PENDING_VAULT_COMMIT = "f" * 40
+PENDING_PR_URL = (
+    "https://github.com/Aranwill/"
+    "malak-project-vault/pull/17"
+)
+
+
+def _make_reconciled_state(
+    *,
+    observed_commit: str = BASE_COMMIT,
+) -> SyncState:
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=BASE_COMMIT,
+        vault_commit=VAULT_HEAD,
+        run_id="reconciled-run",
+    )
+    state = state.with_pending_proposal(
+        base_commit=PREVIOUS_COMMIT,
+        proposed_commit=BASE_COMMIT,
+        vault_commit=PENDING_VAULT_COMMIT,
+        pull_request_url=PENDING_PR_URL,
+    ).accept_pending_proposal(
+        expected_commit=BASE_COMMIT,
+    )
+
+    if observed_commit != BASE_COMMIT:
+        state = state.with_successful_observation(
+            observed_commit=observed_commit,
+            vault_commit=VAULT_HEAD,
+            run_id="observed-run",
+        )
+
+    return state
 
 
 def _make_config(tmp_path: Path) -> AgentConfig:
@@ -725,6 +759,152 @@ def test_run_once_rejects_existing_execution_lock(
     ) == "existing lock\n"
 
 
+def test_controlled_bootstrap_does_not_create_pending_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(
+        base_config,
+        mode="controlled-proposal",
+        proposal=ProposalConfig(
+            branch_prefix="agent/vault-sync",
+            push=True,
+            open_draft_pr=True,
+            github_cli="gh",
+        ),
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=SyncState.initial(),
+    )
+    saved_states: list[SyncState] = []
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, next_state: saved_states.append(next_state),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        lambda *args, **kwargs: pytest.fail(
+            "Bootstrap must not calculate a diff."
+        ),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "prepare_vault_proposal",
+        lambda **kwargs: pytest.fail(
+            "Bootstrap must not prepare a proposal."
+        ),
+    )
+
+    result = run_once(config)
+
+    assert result.bootstrap is True
+    assert result.proposal is None
+    assert saved_states[0].last_reconciled_commit is None
+    assert saved_states[0].pending_proposal_base_commit is None
+    assert saved_states[0].pending_proposal_commit is None
+    assert saved_states[0].pending_proposal_vault_commit is None
+    assert saved_states[0].pending_proposal_pull_request_url is None
+
+
+def test_controlled_run_requires_reconciled_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(base_config, mode="controlled-proposal")
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=BASE_COMMIT,
+        vault_commit=VAULT_HEAD,
+        run_id="observed-run",
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+    )
+
+    with pytest.raises(
+        RunnerError,
+        match="human-reconciled commit cursor",
+    ):
+        run_once(config)
+
+
+def test_controlled_run_rejects_unresolved_pending_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(base_config, mode="controlled-proposal")
+    state = _make_reconciled_state(
+        observed_commit=SOURCE_HEAD,
+    ).with_pending_proposal(
+        base_commit=BASE_COMMIT,
+        proposed_commit=SOURCE_HEAD,
+        vault_commit=PENDING_VAULT_COMMIT,
+        pull_request_url=PENDING_PR_URL,
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+    )
+
+    with pytest.raises(
+        RunnerError,
+        match="pending proposal must be resolved",
+    ):
+        run_once(config)
+
+
+def test_controlled_run_without_proposal_does_not_mark_range_pending(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(base_config, mode="controlled-proposal")
+    state = _make_reconciled_state()
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        lambda *args, **kwargs: (
+            ChangedFile(status="M", path="README.md"),
+        ),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "prepare_vault_proposal",
+        lambda **kwargs: pytest.fail(
+            "A run without candidates must not prepare a proposal."
+        ),
+    )
+    saved_states: list[SyncState] = []
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, next_state: saved_states.append(next_state),
+    )
+
+    result = run_once(config)
+
+    assert result.proposal is None
+    assert saved_states[0].last_reconciled_commit == BASE_COMMIT
+    assert saved_states[0].pending_proposal_base_commit is None
+    assert saved_states[0].pending_proposal_commit is None
+    assert saved_states[0].pending_proposal_vault_commit is None
+    assert saved_states[0].pending_proposal_pull_request_url is None
+
+
 def test_controlled_run_prepares_governed_proposal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -740,11 +920,7 @@ def test_controlled_run_prepares_governed_proposal(
             github_cli="gh",
         ),
     )
-    state = SyncState.initial().with_successful_observation(
-        observed_commit=BASE_COMMIT,
-        vault_commit=VAULT_HEAD,
-        run_id="previous-run",
-    )
+    state = _make_reconciled_state()
     _install_common_stubs(
         monkeypatch,
         tmp_path,
@@ -770,7 +946,10 @@ def test_controlled_run_prepares_governed_proposal(
         content_commit="1" * 40,
         audit_commit="2" * 40,
         report_path="07-audits/vault-synchronization/report.md",
-        pull_request_url="https://github.com/example/pr/1",
+        pull_request_url=(
+            "https://github.com/Aranwill/"
+            "malak-project-vault/pull/17"
+        ),
         modified_paths=(candidate.path,),
     )
     monkeypatch.setattr(
@@ -789,12 +968,26 @@ def test_controlled_run_prepares_governed_proposal(
         "prepare_vault_proposal",
         lambda **kwargs: calls.append(kwargs) or expected,
     )
+    saved_states: list[SyncState] = []
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, next_state: saved_states.append(next_state),
+    )
 
     result = run_once(config)
 
     assert result.proposal == expected
     assert calls[0]["candidates"] == (candidate,)
     assert calls[0]["branch_prefix"] == "agent/vault-sync"
+    assert saved_states[0].last_reconciled_commit == BASE_COMMIT
+    assert saved_states[0].pending_proposal_base_commit == BASE_COMMIT
+    assert saved_states[0].pending_proposal_commit == SOURCE_HEAD
+    assert saved_states[0].pending_proposal_vault_commit == expected.audit_commit
+    assert (
+        saved_states[0].pending_proposal_pull_request_url
+        == expected.pull_request_url
+    )
 
 
 def test_controlled_run_promotes_range_after_dry_run(
@@ -812,18 +1005,8 @@ def test_controlled_run_promotes_range_after_dry_run(
             github_cli="gh",
         ),
     )
-    state = (
-        SyncState.initial()
-        .with_successful_observation(
-            observed_commit=BASE_COMMIT,
-            vault_commit=VAULT_HEAD,
-            run_id="baseline-run",
-        )
-        .with_successful_observation(
-            observed_commit=SOURCE_HEAD,
-            vault_commit=VAULT_HEAD,
-            run_id="dry-run",
-        )
+    state = _make_reconciled_state(
+        observed_commit=SOURCE_HEAD,
     )
     _install_common_stubs(
         monkeypatch,
@@ -850,7 +1033,10 @@ def test_controlled_run_promotes_range_after_dry_run(
         content_commit="1" * 40,
         audit_commit="2" * 40,
         report_path="07-audits/vault-synchronization/report.md",
-        pull_request_url="https://github.com/example/pr/1",
+        pull_request_url=(
+            "https://github.com/Aranwill/"
+            "malak-project-vault/pull/17"
+        ),
         modified_paths=(candidate.path,),
     )
     ranges: list[tuple[str, str]] = []
@@ -896,7 +1082,14 @@ def test_controlled_run_promotes_range_after_dry_run(
     assert result.proposal == expected
     assert ranges == [(BASE_COMMIT, SOURCE_HEAD)]
     assert saved_states[0].last_observed_commit == SOURCE_HEAD
-    assert saved_states[0].last_proposed_commit == SOURCE_HEAD
+    assert saved_states[0].last_reconciled_commit == BASE_COMMIT
+    assert saved_states[0].pending_proposal_base_commit == BASE_COMMIT
+    assert saved_states[0].pending_proposal_commit == SOURCE_HEAD
+    assert saved_states[0].pending_proposal_vault_commit == expected.audit_commit
+    assert (
+        saved_states[0].pending_proposal_pull_request_url
+        == expected.pull_request_url
+    )
 
 
 def test_controlled_run_fast_forwards_vault_before_validation(
