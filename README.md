@@ -9,6 +9,7 @@ repositorio oficial de Malāk y el Malāk Project Vault.
 Fase 1 read-only — cerrada
 Controlled Vault Proposals — implementado
 Modos — dry-run / controlled-proposal
+Estado persistente — esquema v3 con reconciliación humana
 ```
 
 El agente puede actualizar referencias remotas, detectar cambios nuevos en
@@ -145,19 +146,62 @@ Las ejecuciones posteriores:
    commit de auditoría, realizan push y abren una PR draft;
 10. guardan el nuevo estado solo después de completar el circuito.
 
-El estado separa dos cursores:
+El estado v3 separa observación, reconciliación y propuesta pendiente:
 
 - `last_observed_commit` registra el último HEAD auditado por
   `dry-run`;
-- `last_proposed_commit` registra hasta qué commit se evaluó
-  correctamente una propuesta controlada.
+- `last_reconciled_commit` registra el último commit de Malāk cuya
+  propuesta fue aceptada o cuya base fue preservada tras un rechazo;
+- `pending_proposal_base_commit` y `pending_proposal_commit` delimitan
+  el rango sujeto a decisión humana;
+- `pending_proposal_vault_commit` y
+  `pending_proposal_pull_request_url` fijan la identidad exacta de la PR.
 
 Por esa separación, una previsualización `dry-run` no consume el rango
 pendiente. Una ejecución posterior en `controlled-proposal` vuelve a
-evaluar ese mismo rango y solo avanza su cursor cuando termina sin una
-conclusión `fail`. Los estados de esquema 1 se migran automáticamente al
-esquema 2; si existe el backup atómico `.prev`, se usa para recuperar el
-inicio pendiente de la última previsualización.
+evaluar ese mismo rango. Una propuesta creada queda pendiente y bloquea
+nuevas propuestas hasta que el humano la acepte o rechace.
+
+Los estados v1 y v2 se interpretan como v3 sin escritura automática. Si
+contienen una propuesta histórica, `run-once`, `accept-proposal` y
+`reject-proposal` permanecen bloqueados hasta completar la reconciliación
+migrada explícita. No se debe editar el JSON manualmente.
+
+## Reconciliar una propuesta
+
+Para una propuesta v3 ordinaria, después de revisar su PR:
+
+```powershell
+malak-vault-sync accept-proposal `
+  --config .\config\vault-sync.yaml `
+  --expected-commit <SHA_MALAK>
+```
+
+o, tras cerrar la PR sin merge:
+
+```powershell
+malak-vault-sync reject-proposal `
+  --config .\config\vault-sync.yaml `
+  --expected-commit <SHA_MALAK>
+```
+
+Para una propuesta recuperada desde un archivo original v1 o v2, usar
+únicamente el comando gobernado de migración:
+
+```powershell
+malak-vault-sync reconcile-migrated-proposal `
+  --config .\config\vault-sync.yaml `
+  --decision accept `
+  --expected-base-commit <SHA_BASE_MALAK> `
+  --expected-commit <SHA_PROPUESTO_MALAK> `
+  --proposal-vault-commit <SHA_CABECERA_PR_VAULT> `
+  --pull-request-url <URL_PR_VAULT>
+```
+
+El comando exige una decisión humana y evidencia completa, consulta
+GitHub bajo lock y persiste v3 solo si la URL, el commit de cabecera y el
+estado remoto coinciden. La guía de migración y rollback está en
+`docs/STATE_V3_MIGRATION_AND_RECONCILIATION.md`.
 
 Salidas locales:
 
@@ -184,6 +228,7 @@ Códigos de salida:
 - límite de tamaño por documento candidato;
 - lock de ejecución;
 - estado escrito de forma atómica con backup;
+- reconciliación v1/v2 explícita, sin inferir decisión ni identidad;
 - identificadores de ejecución con microsegundos;
 - credenciales sanitizadas en evidencia e informes;
 - snapshots históricos del Vault fuera del allowlist.

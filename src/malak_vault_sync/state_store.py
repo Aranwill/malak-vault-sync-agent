@@ -15,6 +15,14 @@ class StateStoreError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class LoadedSyncState:
+    """Validated state plus the schema found on disk before migration."""
+
+    source_schema_version: int
+    state: "SyncState"
+
+
+@dataclass(frozen=True, slots=True)
 class SyncState:
     schema_version: int
     source_repository: str
@@ -117,6 +125,53 @@ class SyncState:
             ),
         )
 
+    def with_migrated_proposal_identity(
+        self,
+        *,
+        expected_base_commit: str,
+        expected_commit: str,
+        vault_commit: str,
+        pull_request_url: str,
+    ) -> "SyncState":
+        """Attach an operator-supplied identity to one legacy proposal."""
+
+        normalized_base = _validate_commit_sha(
+            expected_base_commit,
+            "expected_base_commit",
+        )
+        normalized_commit = _validate_commit_sha(
+            expected_commit,
+            "expected_commit",
+        )
+
+        if (
+            self.pending_proposal_base_commit != normalized_base
+            or self.pending_proposal_commit != normalized_commit
+        ):
+            raise StateStoreError(
+                "The migrated proposal range does not match the expected "
+                "base and commit."
+            )
+
+        if (
+            self.pending_proposal_vault_commit is not None
+            or self.pending_proposal_pull_request_url is not None
+        ):
+            raise StateStoreError(
+                "The migrated proposal already has a persisted identity."
+            )
+
+        return replace(
+            self,
+            pending_proposal_vault_commit=_validate_commit_sha(
+                vault_commit,
+                "vault_commit",
+            ),
+            pending_proposal_pull_request_url=(
+                _validate_pull_request_url(pull_request_url)
+            ),
+        )
+
     def accept_pending_proposal(
         self,
         *,
@@ -208,10 +263,23 @@ _ALLOWED_STATUSES = {
 
 
 def load_state(path: str | Path) -> SyncState:
+    """Load and migrate a state while preserving the established API."""
+
+    return load_state_with_metadata(path).state
+
+
+def load_state_with_metadata(
+    path: str | Path,
+) -> LoadedSyncState:
+    """Load state and report the schema that existed before migration."""
+
     state_path = Path(path)
 
     if not state_path.exists():
-        return SyncState.initial()
+        return LoadedSyncState(
+            source_schema_version=3,
+            state=SyncState.initial(),
+        )
 
     if not state_path.is_file():
         raise StateStoreError(
@@ -377,7 +445,10 @@ def load_state(path: str | Path) -> SyncState:
 
     _validate_state(state)
 
-    return state
+    return LoadedSyncState(
+        source_schema_version=schema_version,
+        state=state,
+    )
 
 
 def save_state(
