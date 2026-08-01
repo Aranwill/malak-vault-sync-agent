@@ -6,10 +6,12 @@ from pathlib import Path
 
 import pytest
 
+import malak_vault_sync.state_store as state_store_module
 from malak_vault_sync.state_store import (
     StateStoreError,
     SyncState,
     load_state,
+    load_state_with_metadata,
     save_state,
 )
 
@@ -140,6 +142,38 @@ def test_save_state_creates_backup(
         encoding="utf-8"
     ) == previous_payload
     assert load_state(path) == updated_state
+
+
+def test_atomic_replace_failure_preserves_active_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sync-state.json"
+    initial_state = SyncState.initial()
+    save_state(path, initial_state)
+    active_payload = path.read_bytes()
+
+    updated_state = initial_state.with_successful_observation(
+        observed_commit=SOURCE_COMMIT,
+        vault_commit=VAULT_COMMIT,
+        run_id="run-001",
+    )
+    monkeypatch.setattr(
+        state_store_module.os,
+        "replace",
+        lambda source, target: (_ for _ in ()).throw(
+            OSError("simulated atomic replace failure")
+        ),
+    )
+
+    with pytest.raises(
+        StateStoreError,
+        match="Could not write state file",
+    ):
+        save_state(path, updated_state)
+
+    assert path.read_bytes() == active_payload
+    assert not tuple(tmp_path.glob(".sync-state.json.*.tmp"))
 
 
 def test_saved_json_is_deterministic(
@@ -621,6 +655,65 @@ def test_v2_state_migrates_proposal_as_pending_not_reconciled(
     assert state.pending_proposal_commit == SOURCE_COMMIT
     assert state.pending_proposal_vault_commit is None
     assert state.pending_proposal_pull_request_url is None
+
+
+def test_v2_load_reports_original_schema_before_migration(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sync-state.json"
+    payload = {
+        "schema_version": 2,
+        "source_repository": "Aranwill/jarvis",
+        "source_branch": "main",
+        "last_observed_commit": SOURCE_COMMIT,
+        "last_proposed_commit": SOURCE_COMMIT,
+        "last_applied_commit": None,
+        "last_successful_run_id": "manual-run",
+        "last_successful_run_at": "2026-07-30T21:00:00+00:00",
+        "vault_commit_at_run": VAULT_COMMIT,
+        "status": "success",
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_state_with_metadata(path)
+
+    assert loaded.source_schema_version == 2
+    assert loaded.state.schema_version == 3
+
+
+def test_migrated_identity_requires_exact_range() -> None:
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=SOURCE_COMMIT,
+        vault_commit=VAULT_COMMIT,
+        run_id="legacy-run",
+    )
+    migrated = state.__class__(
+        schema_version=state.schema_version,
+        source_repository=state.source_repository,
+        source_branch=state.source_branch,
+        last_observed_commit=state.last_observed_commit,
+        last_reconciled_commit=None,
+        pending_proposal_base_commit=BASE_COMMIT,
+        pending_proposal_commit=SOURCE_COMMIT,
+        pending_proposal_vault_commit=None,
+        pending_proposal_pull_request_url=None,
+        last_applied_commit=None,
+        last_successful_run_id=state.last_successful_run_id,
+        last_successful_run_at=state.last_successful_run_at,
+        vault_commit_at_run=state.vault_commit_at_run,
+        status=state.status,
+    )
+
+    with pytest.raises(
+        StateStoreError,
+        match="range does not match",
+    ):
+        migrated.with_migrated_proposal_identity(
+            expected_base_commit=PENDING_COMMIT,
+            expected_commit=SOURCE_COMMIT,
+            vault_commit=PROPOSAL_VAULT_COMMIT,
+            pull_request_url=PULL_REQUEST_URL,
+        )
 
 
 @pytest.mark.parametrize(

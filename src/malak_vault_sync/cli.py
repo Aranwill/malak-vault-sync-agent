@@ -14,6 +14,7 @@ from malak_vault_sync.git_inspector import GitInspectionError
 from malak_vault_sync.proposal_reconciliation import (
     ProposalReconciliationError,
     accept_proposal,
+    reconcile_migrated_proposal,
     reject_proposal,
 )
 from malak_vault_sync.runner import RunnerError, run_once
@@ -84,6 +85,43 @@ def build_parser() -> argparse.ArgumentParser:
             help="Expected pending source commit SHA.",
         )
 
+    migrated_parser = subparsers.add_parser(
+        "reconcile-migrated-proposal",
+        help="Resolve one pending proposal from an original v1/v2 state.",
+    )
+    migrated_parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Path to the YAML configuration file.",
+    )
+    migrated_parser.add_argument(
+        "--decision",
+        choices=("accept", "reject"),
+        required=True,
+        help="Explicit human decision for the migrated proposal.",
+    )
+    migrated_parser.add_argument(
+        "--expected-base-commit",
+        required=True,
+        help="Expected source commit at the start of the pending range.",
+    )
+    migrated_parser.add_argument(
+        "--expected-commit",
+        required=True,
+        help="Expected source commit at the end of the pending range.",
+    )
+    migrated_parser.add_argument(
+        "--proposal-vault-commit",
+        required=True,
+        help="Exact Vault commit at the head of the historical PR.",
+    )
+    migrated_parser.add_argument(
+        "--pull-request-url",
+        required=True,
+        help="Exact historical Vault pull request URL.",
+    )
+
     return parser
 
 
@@ -109,6 +147,16 @@ def main(argv: list[str] | None = None) -> int:
             args.config,
             expected_commit=args.expected_commit,
             accept=False,
+        )
+
+    if args.command == "reconcile-migrated-proposal":
+        return _run_migrated_proposal_resolution(
+            args.config,
+            decision=args.decision,
+            expected_base_commit=args.expected_base_commit,
+            expected_commit=args.expected_commit,
+            proposal_vault_commit=args.proposal_vault_commit,
+            pull_request_url=args.pull_request_url,
         )
 
     parser.error(f"Unsupported command: {args.command}")
@@ -219,6 +267,41 @@ def _run_proposal_resolution(
     else:
         print("Proposal rejected.")
 
+    return 0
+
+
+def _run_migrated_proposal_resolution(
+    config_path: Path,
+    *,
+    decision: str,
+    expected_base_commit: str,
+    expected_commit: str,
+    proposal_vault_commit: str,
+    pull_request_url: str,
+) -> int:
+    try:
+        config = load_config(config_path)
+        reconcile_migrated_proposal(
+            config,
+            decision=decision,
+            expected_base_commit=expected_base_commit,
+            expected_commit=expected_commit,
+            proposal_vault_commit=proposal_vault_commit,
+            pull_request_url=pull_request_url,
+        )
+    except (
+        ConfigurationError,
+        ExecutionLockError,
+        ProposalReconciliationError,
+        StateStoreError,
+    ) as exc:
+        print(
+            f"Migrated proposal reconciliation failed: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"Migrated proposal {decision}ed.")
     return 0
 
 

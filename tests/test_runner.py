@@ -862,6 +862,35 @@ def test_controlled_run_rejects_unresolved_pending_proposal(
         run_once(config)
 
 
+def test_controlled_run_rejects_unresolved_migrated_pending_range(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(base_config, mode="controlled-proposal")
+    observed = SyncState.initial().with_successful_observation(
+        observed_commit=SOURCE_HEAD,
+        vault_commit=VAULT_HEAD,
+        run_id="legacy-proposal-run",
+    )
+    migrated = replace(
+        observed,
+        pending_proposal_base_commit=BASE_COMMIT,
+        pending_proposal_commit=SOURCE_HEAD,
+    )
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=migrated,
+    )
+
+    with pytest.raises(
+        RunnerError,
+        match="pending proposal must be resolved",
+    ):
+        run_once(config)
+
+
 def test_controlled_run_without_proposal_does_not_mark_range_pending(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -20,8 +20,8 @@ Ante un cambio publicado en `Aranwill/jarvis/main`, el agente:
 9. crea un segundo commit con el informe y su entrada en el índice;
 10. ejecuta `push` sobre una rama `agent/vault-sync-<SHA8>`;
 11. abre una PR draft mediante GitHub CLI;
-12. guarda el nuevo estado local únicamente después de completar el
-    circuito.
+12. guarda en estado v3 el rango y la identidad exacta de la propuesta
+    pendiente únicamente después de completar el circuito.
 
 El agente nunca escribe en `Aranwill/jarvis`, nunca escribe
 directamente en `main` del Vault y nunca aprueba o mergea la PR.
@@ -87,17 +87,18 @@ Las ejecuciones posteriores solo crean una PR cuando:
 - no hay errores de validación;
 - no existe otra PR de sincronización abierta.
 
-`dry-run` y `controlled-proposal` mantienen cursores independientes. El
-primero puede avanzar el último commit observado sin perder el inicio
-del rango todavía no propuesto. El segundo vuelve a generar evidencia y
-auditoría para ese rango antes de crear la rama, los commits y la PR
-draft. Solo una ejecución controlada sin conclusión `fail` avanza el
-cursor de propuesta.
+`dry-run` y `controlled-proposal` mantienen responsabilidades separadas.
+El primero puede avanzar `last_observed_commit` sin consumir el rango
+todavía no reconciliado. El segundo parte de `last_reconciled_commit`,
+genera evidencia y auditoría y registra una propuesta pendiente con:
 
-La migración desde el estado de esquema 1 es automática. Cuando el
-último `dry-run` ya avanzó el cursor antiguo, el agente recupera la base
-anterior desde `sync-state.json.prev`; no requiere editar ni restaurar
-el estado manualmente.
+- `pending_proposal_base_commit`;
+- `pending_proposal_commit`;
+- `pending_proposal_vault_commit`;
+- `pending_proposal_pull_request_url`.
+
+Mientras cualquiera de esos rangos permanezca pendiente, `run-once` no
+puede crear otra propuesta.
 
 Si el `push` de una propuesta funciona pero GitHub CLI no puede crear la
 PR draft, el agente elimina únicamente la rama remota de esa ejecución y
@@ -137,6 +138,66 @@ Cada PR permanece en estado draft. El propietario debe revisar:
 
 Solo el propietario puede aprobar y mergear.
 
+## Reconciliación v3 ordinaria
+
+Después del merge humano de una PR pendiente:
+
+```powershell
+malak-vault-sync accept-proposal `
+  --config .\config\vault-sync.yaml `
+  --expected-commit <SHA_MALAK>
+```
+
+El agente verifica que la URL y el commit de cabecera coincidan con el
+estado persistido y que GitHub informe la PR como mergeada. Solo entonces
+avanza `last_reconciled_commit`.
+
+Después de cerrar una PR sin merge:
+
+```powershell
+malak-vault-sync reject-proposal `
+  --config .\config\vault-sync.yaml `
+  --expected-commit <SHA_MALAK>
+```
+
+El rechazo conserva el cursor reconciliado anterior y elimina únicamente
+la propuesta pendiente.
+
+## Migración gobernada v1/v2
+
+La lectura de un archivo v1 o v2 recupera el rango histórico y lo
+representa en memoria como v3, pero no inventa la URL ni el commit de la
+PR. Por eso no persiste una migración automática y bloquea la operación
+controlada hasta que el propietario aporte la evidencia.
+
+La única ruta soportada es:
+
+```powershell
+malak-vault-sync reconcile-migrated-proposal `
+  --config .\config\vault-sync.yaml `
+  --decision <accept|reject> `
+  --expected-base-commit <SHA_BASE_MALAK> `
+  --expected-commit <SHA_PROPUESTO_MALAK> `
+  --proposal-vault-commit <SHA_CABECERA_PR_VAULT> `
+  --pull-request-url <URL_PR_VAULT>
+```
+
+El comando:
+
+1. adquiere `agent.lock`;
+2. exige que el archivo original sea v1 o v2;
+3. verifica base, extremo, repositorio, URL y commit de cabecera;
+4. exige PR mergeada para aceptar o cerrada sin merge para rechazar;
+5. guarda v3 atómicamente y conserva el archivo original en `.prev`;
+6. mantiene `last_applied_commit` en `null`.
+
+No admite PR abierta, identidad incompleta, rango diferente, timeout,
+respuesta ambigua de GitHub, lock ocupado ni un archivo v3 ordinario.
+Ante cualquier fallo anterior a la persistencia, el estado no cambia.
+
+La secuencia completa, los códigos de salida y el rollback están en
+`STATE_V3_MIGRATION_AND_RECONCILIATION.md`.
+
 ## Rollback
 
 Para detener nuevas detecciones:
@@ -147,3 +208,8 @@ Disable-ScheduledTask -TaskName MalakVaultSyncAgent
 
 Para revertir una propuesta no aprobada, cerrar la PR sin merge. Malāk y
 `main` del Vault permanecen intactos.
+
+Para revertir una reconciliación local recién persistida, detener el
+scheduler, conservar ambos archivos y restaurar
+`sync-state.json.prev` únicamente después de verificar su hash y bajo
+decisión humana. No editar campos individuales del JSON.

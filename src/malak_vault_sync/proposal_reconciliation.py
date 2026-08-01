@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from malak_vault_sync.evidence import sanitize_text
 from malak_vault_sync.execution_lock import (
@@ -14,6 +14,7 @@ from malak_vault_sync.state_store import (
     StateStoreError,
     SyncState,
     load_state,
+    load_state_with_metadata,
     save_state,
 )
 
@@ -28,6 +29,89 @@ class PullRequestSnapshot:
     head_commit: str
     state: str
     merged_at: str | None
+
+
+def reconcile_migrated_proposal(
+    config: AgentConfig,
+    *,
+    decision: str,
+    expected_base_commit: str,
+    expected_commit: str,
+    proposal_vault_commit: str,
+    pull_request_url: str,
+) -> None:
+    """Resolve one v1/v2 proposal using explicit human-supplied identity."""
+
+    if decision not in {"accept", "reject"}:
+        raise ProposalReconciliationError(
+            "Migrated proposal decision must be accept or reject."
+        )
+
+    _require_controlled_proposal_mode(config)
+    lock_path = config.state.path.with_name("agent.lock")
+
+    with execution_lock(lock_path):
+        loaded = load_state_with_metadata(config.state.path)
+
+        if loaded.source_schema_version not in {1, 2}:
+            raise ProposalReconciliationError(
+                "Migrated proposal reconciliation requires an original "
+                "v1 or v2 state file."
+            )
+
+        try:
+            identified_state = (
+                loaded.state.with_migrated_proposal_identity(
+                    expected_base_commit=expected_base_commit,
+                    expected_commit=expected_commit,
+                    vault_commit=proposal_vault_commit,
+                    pull_request_url=pull_request_url,
+                )
+            )
+        except StateStoreError as exc:
+            raise ProposalReconciliationError(
+                "The migrated proposal does not match the explicit "
+                "range and identity."
+            ) from exc
+
+        pull_request = _inspect_expected_pull_request(
+            config,
+            identified_state,
+        )
+
+        if decision == "accept":
+            if (
+                pull_request.state != "MERGED"
+                or pull_request.merged_at is None
+            ):
+                raise ProposalReconciliationError(
+                    "The migrated proposal pull request is not merged."
+                )
+
+            next_state = identified_state.accept_pending_proposal(
+                expected_commit=expected_commit,
+            )
+        else:
+            if (
+                pull_request.state != "CLOSED"
+                or pull_request.merged_at is not None
+            ):
+                raise ProposalReconciliationError(
+                    "The migrated proposal pull request is not closed "
+                    "without merge."
+                )
+
+            rejected_state = identified_state.reject_pending_proposal(
+                expected_commit=expected_commit,
+            )
+            next_state = replace(
+                rejected_state,
+                last_reconciled_commit=(
+                    identified_state.pending_proposal_base_commit
+                ),
+            )
+
+        save_state(config.state.path, next_state)
 
 
 def accept_proposal(
@@ -180,10 +264,7 @@ def _prepare_resolution(
     expected_commit: str,
     accept: bool,
 ) -> tuple[SyncState, SyncState]:
-    if config.mode != "controlled-proposal" or config.proposal is None:
-        raise ProposalReconciliationError(
-            "Proposal reconciliation requires controlled-proposal mode."
-        )
+    _require_controlled_proposal_mode(config)
 
     state = load_state(config.state.path)
 
@@ -210,6 +291,13 @@ def _prepare_resolution(
         )
 
     return state, next_state
+
+
+def _require_controlled_proposal_mode(config: AgentConfig) -> None:
+    if config.mode != "controlled-proposal" or config.proposal is None:
+        raise ProposalReconciliationError(
+            "Proposal reconciliation requires controlled-proposal mode."
+        )
 
 
 def _inspect_expected_pull_request(

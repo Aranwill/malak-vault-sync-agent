@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -101,6 +102,35 @@ def _make_pending_state() -> SyncState:
     )
 
 
+def _write_v2_state(path: Path) -> str:
+    payload = {
+        "schema_version": 2,
+        "source_repository": "Aranwill/jarvis",
+        "source_branch": "main",
+        "last_observed_commit": SOURCE_COMMIT,
+        "last_proposed_commit": SOURCE_COMMIT,
+        "last_applied_commit": None,
+        "last_successful_run_id": "legacy-proposal-run",
+        "last_successful_run_at": "2026-07-31T18:00:00+00:00",
+        "vault_commit_at_run": VAULT_BASE_COMMIT,
+        "status": "success",
+    }
+    previous_payload = {
+        **payload,
+        "last_observed_commit": BASE_COMMIT,
+        "last_proposed_commit": BASE_COMMIT,
+        "last_successful_run_id": "legacy-base-run",
+    }
+    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(serialized, encoding="utf-8")
+    path.with_suffix(".json.prev").write_text(
+        json.dumps(previous_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return serialized
+
+
 def _snapshot(
     module,
     *,
@@ -115,6 +145,217 @@ def _snapshot(
         state=state,
         merged_at=merged_at,
     )
+
+
+def test_accepts_migrated_v2_proposal_and_preserves_backup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    original_payload = _write_v2_state(config.state.path)
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: _snapshot(
+            module,
+            state="MERGED",
+            merged_at="2026-07-31T18:00:00Z",
+        ),
+    )
+
+    module.reconcile_migrated_proposal(
+        config,
+        decision="accept",
+        expected_base_commit=BASE_COMMIT,
+        expected_commit=SOURCE_COMMIT,
+        proposal_vault_commit=PROPOSAL_VAULT_COMMIT,
+        pull_request_url=PULL_REQUEST_URL,
+    )
+
+    state = load_state(config.state.path)
+    assert state.schema_version == 3
+    assert state.last_reconciled_commit == SOURCE_COMMIT
+    assert state.pending_proposal_base_commit is None
+    assert state.pending_proposal_commit is None
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
+    assert state.last_applied_commit is None
+    assert config.state.path.with_suffix(".json.prev").read_text(
+        encoding="utf-8"
+    ) == original_payload
+
+
+def test_rejects_migrated_v2_proposal_and_preserves_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    _write_v2_state(config.state.path)
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: _snapshot(
+            module,
+            state="CLOSED",
+            merged_at=None,
+        ),
+    )
+
+    module.reconcile_migrated_proposal(
+        config,
+        decision="reject",
+        expected_base_commit=BASE_COMMIT,
+        expected_commit=SOURCE_COMMIT,
+        proposal_vault_commit=PROPOSAL_VAULT_COMMIT,
+        pull_request_url=PULL_REQUEST_URL,
+    )
+
+    state = load_state(config.state.path)
+    assert state.last_reconciled_commit == BASE_COMMIT
+    assert state.pending_proposal_base_commit is None
+    assert state.pending_proposal_commit is None
+    assert state.last_applied_commit is None
+
+
+def test_migrated_reconciliation_refuses_v3_state_before_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    pending_state = _make_pending_state()
+    save_state(config.state.path, pending_state)
+    before = config.state.path.read_bytes()
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: pytest.fail("A v3 state must not inspect GitHub."),
+    )
+
+    with pytest.raises(
+        module.ProposalReconciliationError,
+        match="original v1 or v2",
+    ):
+        module.reconcile_migrated_proposal(
+            config,
+            decision="accept",
+            expected_base_commit=BASE_COMMIT,
+            expected_commit=SOURCE_COMMIT,
+            proposal_vault_commit=PROPOSAL_VAULT_COMMIT,
+            pull_request_url=PULL_REQUEST_URL,
+        )
+
+    assert config.state.path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("expected_base", "expected_commit"),
+    [
+        (OTHER_COMMIT, SOURCE_COMMIT),
+        (BASE_COMMIT, OTHER_COMMIT),
+    ],
+)
+def test_migrated_reconciliation_refuses_unexpected_range(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    expected_base: str,
+    expected_commit: str,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    _write_v2_state(config.state.path)
+    before = config.state.path.read_bytes()
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: pytest.fail(
+            "An unexpected range must fail before PR inspection."
+        ),
+    )
+
+    with pytest.raises(
+        module.ProposalReconciliationError,
+        match="explicit range and identity",
+    ):
+        module.reconcile_migrated_proposal(
+            config,
+            decision="accept",
+            expected_base_commit=expected_base,
+            expected_commit=expected_commit,
+            proposal_vault_commit=PROPOSAL_VAULT_COMMIT,
+            pull_request_url=PULL_REQUEST_URL,
+        )
+
+    assert config.state.path.read_bytes() == before
+
+
+def test_migrated_reconciliation_keeps_state_on_remote_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    _write_v2_state(config.state.path)
+    before = config.state.path.read_bytes()
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: (_ for _ in ()).throw(
+            module.ProposalReconciliationError("GitHub unavailable")
+        ),
+    )
+
+    with pytest.raises(
+        module.ProposalReconciliationError,
+        match="GitHub unavailable",
+    ):
+        module.reconcile_migrated_proposal(
+            config,
+            decision="accept",
+            expected_base_commit=BASE_COMMIT,
+            expected_commit=SOURCE_COMMIT,
+            proposal_vault_commit=PROPOSAL_VAULT_COMMIT,
+            pull_request_url=PULL_REQUEST_URL,
+        )
+
+    assert config.state.path.read_bytes() == before
+
+
+def test_migrated_reconciliation_refuses_existing_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    _write_v2_state(config.state.path)
+    before = config.state.path.read_bytes()
+    lock_path = config.state.path.with_name("agent.lock")
+    lock_path.write_text("occupied\n", encoding="utf-8")
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: pytest.fail(
+            "A locked migration must not inspect GitHub."
+        ),
+    )
+
+    with pytest.raises(
+        module.ExecutionLockError,
+        match="already exists",
+    ):
+        module.reconcile_migrated_proposal(
+            config,
+            decision="accept",
+            expected_base_commit=BASE_COMMIT,
+            expected_commit=SOURCE_COMMIT,
+            proposal_vault_commit=PROPOSAL_VAULT_COMMIT,
+            pull_request_url=PULL_REQUEST_URL,
+        )
+
+    assert config.state.path.read_bytes() == before
+    assert lock_path.read_text(encoding="utf-8") == "occupied\n"
 
 
 def test_accept_requires_matching_merged_pull_request(
