@@ -10,7 +10,11 @@ Fase 1 read-only — cerrada
 Controlled Vault Proposals — implementado
 Modos — dry-run / controlled-proposal
 Estado persistente — esquema v3 con reconciliación humana
+Incremento 4 — cerrado técnica y operativamente
 ```
+
+El cierre gobernado del Incremento 4 se documenta en
+[docs/INCREMENT_4_CLOSURE.md](docs/INCREMENT_4_CLOSURE.md).
 
 El agente puede actualizar referencias remotas, detectar cambios nuevos en
 `Aranwill/jarvis/main`, generar evidencia verificable, resolver documentos
