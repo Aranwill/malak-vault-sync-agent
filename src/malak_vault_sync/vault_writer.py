@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from malak_vault_sync import __version__
 from malak_vault_sync.audit import AuditReport
 from malak_vault_sync.candidate_resolver import (
     DocumentCandidate,
@@ -679,7 +680,7 @@ def _write_audit_report(
             "type: synchronization-audit-report",
             "status: proposed",
             f"created: {generated:%Y-%m-%d}",
-            "agent_version: 0.3.0",
+            f"agent_version: {__version__}",
             "policy_version: 1.1",
             "execution_mode: controlled-proposal",
             "official_repository: Aranwill/jarvis",
@@ -691,7 +692,7 @@ def _write_audit_report(
             f"vault_base_head: {evidence.vault_snapshot.remote_head}",
             f"vault_work_branch: {branch}",
             f"vault_content_commit: {content_commit}",
-            "triggered_by: scheduled-detection",
+            "triggered_by: manual-on-demand",
             "operational_authority: none",
             "human_review_required: true",
             "merge_allowed: false",

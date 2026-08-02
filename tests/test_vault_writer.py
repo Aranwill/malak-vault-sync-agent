@@ -207,6 +207,8 @@ def test_audit_report_references_prior_content_commit(
     assert f"Commit de contenido: `{content_commit}`" in content
     assert "human_review_required: true" in content
     assert "merge_allowed: false" in content
+    assert "agent_version: 0.3.0" in content
+    assert "triggered_by: manual-on-demand" in content
 
 
 def test_synchronize_vault_checkout_fast_forwards_clean_main(

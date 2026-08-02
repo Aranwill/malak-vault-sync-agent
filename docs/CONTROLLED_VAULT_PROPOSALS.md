@@ -9,13 +9,14 @@ Ante un cambio publicado en `Aranwill/jarvis/main`, el agente:
 
 1. actualiza las referencias remotas y, si el clon limpio del Vault quedó
    detrás, avanza su `main` local únicamente mediante `fast-forward`;
-2. compara el nuevo HEAD con el último commit observado;
+2. compara el nuevo HEAD con el último commit reconciliado;
 3. resuelve únicamente documentos candidatos allowlisted;
 4. genera evidencia e informe local;
 5. crea un worktree temporal desde `origin/main` del Vault;
 6. incorpora en cada candidato una proyección determinista del estado
    oficial, los commits observados y la ficha de sprint más reciente;
-7. crea el commit documental;
+7. valida nuevamente el contenido final, su frontmatter YAML, enlaces y
+   wikilinks, y solo entonces crea el commit documental;
 8. genera un informe auditable que referencia ese commit;
 9. crea un segundo commit con el informe y su entrada en el índice;
 10. ejecuta `push` sobre una rama `agent/vault-sync-<SHA8>`;
@@ -73,7 +74,8 @@ La configuración rechaza:
 ## Primera ejecución
 
 La primera ejecución conserva el comportamiento de bootstrap: registra
-el HEAD observado y no crea una propuesta retrospectiva.
+el HEAD observado como primer cursor reconciliado y no crea una propuesta
+retrospectiva.
 
 ```powershell
 malak-vault-sync run-once `
@@ -105,24 +107,29 @@ PR draft, el agente elimina únicamente la rama remota de esa ejecución y
 no persiste el nuevo estado observado. La siguiente corrida puede
 reintentarlo sin reutilizar una rama huérfana.
 
-## Detección programada
+Si la PR draft se crea pero falla la persistencia local posterior, la
+siguiente ejecución consulta la rama determinista
+`agent/vault-sync-<SHA8>`. Solo recupera la propuesta cuando existe una
+única PR y coinciden repositorio, rama, base, HEAD remoto, cuerpo con el
+SHA completo de Malāk, estado y condición de borrador. Después persiste la
+identidad pendiente y se detiene; nunca crea una segunda propuesta.
 
-El script `scripts/install-scheduled-task.ps1` instala una tarea del
-Programador de tareas de Windows para invocar `run-once` periódicamente.
-La tarea no ejecuta un daemon y no mantiene procesos residentes.
+## Ejecución manual vigente
 
-Ejemplo:
+La operación aprobada es `manual-on-demand`. El propietario ejecuta
+`run-once` de forma explícita y conserva control sobre cuándo se observa
+Malāk y cuándo puede generarse una PR draft.
+
+El script `scripts/install-scheduled-task.ps1` permanece versionado como
+capacidad opcional e histórica, pero no está activo ni autorizado como
+modo operativo vigente. Su activación requiere una aprobación humana nueva.
+
+Ejemplo manual:
 
 ```powershell
-.\scripts\install-scheduled-task.ps1 `
-  -ProjectPath D:\Ollama\malak-vault-sync-agent `
-  -ConfigPath D:\Ollama\malak-vault-sync-agent\config\vault-sync.yaml `
-  -PythonPath D:\Ollama\malak-vault-sync-agent\.venv\Scripts\python.exe `
-  -IntervalMinutes 15
+malak-vault-sync run-once `
+  --config .\config\vault-sync.yaml
 ```
-
-La instalación falla si ya existe una tarea con el mismo nombre. Esto
-impide reemplazar silenciosamente una configuración operativa.
 
 ## Human in Control
 
@@ -200,7 +207,9 @@ La secuencia completa, los códigos de salida y el rollback están en
 
 ## Rollback
 
-Para detener nuevas detecciones:
+Para detener nuevas detecciones manuales, no ejecutar `run-once`.
+
+Si existiera una tarea heredada, deshabilitarla explícitamente:
 
 ```powershell
 Disable-ScheduledTask -TaskName MalakVaultSyncAgent

@@ -10,6 +10,19 @@ Autoridad de cierre: propietario humano
 Autoridad operativa del agente: none
 ```
 
+## Nota de vigencia posterior — 2026-08-02
+
+Este cierre conserva valor histórico y acredita las validaciones realizadas
+el 2026-08-01. Una auditoría integral posterior identificó brechas no
+cubiertas por la suite de ese momento: bootstrap controlado, validación del
+contenido final, frontmatter, wikilinks, ruta real de snapshots, recuperación
+tras fallo de persistencia, disparador, versionado, cobertura de candidatos y
+CI multiplataforma.
+
+Por lo tanto, este documento no debe interpretarse como certificación del
+baseline actual. El propietario aprobó el Incremento Correctivo Integral 5
+para reconciliar esas brechas sin modificar Malāk ni el Vault directamente.
+
 ## Propósito
 
 Este documento registra el cierre técnico y operativo del Incremento 4

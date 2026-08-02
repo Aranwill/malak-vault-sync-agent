@@ -10,7 +10,9 @@ Fase 1 read-only — cerrada
 Controlled Vault Proposals — implementado
 Modos — dry-run / controlled-proposal
 Estado persistente — esquema v3 con reconciliación humana
-Incremento 4 — cerrado técnica y operativamente
+Incremento 4 — cierre histórico aprobado; no certifica el baseline actual
+Incremento Correctivo Integral 5 — aprobado y en implementación
+Operación vigente — manual-on-demand, sin scheduler activo
 ```
 
 El cierre gobernado del Incremento 4 se documenta en
@@ -143,11 +145,12 @@ Las ejecuciones posteriores:
    Malāk;
 4. detectan modificaciones, altas, bajas y renombres;
 5. resuelven documentos candidatos del Vault;
-6. validan rutas, Markdown, YAML y enlaces;
+6. validan rutas, Markdown, frontmatter YAML, enlaces Markdown y wikilinks;
 7. generan evidencia e informe con SHA-256;
 8. en `dry-run`, finalizan sin modificar el Vault;
-9. en `controlled-proposal`, crean el commit documental, el informe y
-   commit de auditoría, realizan push y abren una PR draft;
+9. en `controlled-proposal`, validan nuevamente la proyección final,
+   crean el commit documental, el informe y commit de auditoría, realizan
+   push y abren una PR draft;
 10. guardan el nuevo estado solo después de completar el circuito.
 
 El estado v3 separa observación, reconciliación y propuesta pendiente:
@@ -165,6 +168,13 @@ Por esa separación, una previsualización `dry-run` no consume el rango
 pendiente. Una ejecución posterior en `controlled-proposal` vuelve a
 evaluar ese mismo rango. Una propuesta creada queda pendiente y bloquea
 nuevas propuestas hasta que el humano la acepte o rechace.
+
+El bootstrap de `controlled-proposal` establece el primer cursor
+reconciliado sin crear una propuesta retrospectiva. Si una PR draft fue
+creada pero la persistencia local falló, la siguiente ejecución recupera
+su identidad únicamente cuando rama, base, HEAD, cuerpo y estado remoto
+coinciden de forma unívoca; después se detiene para exigir reconciliación
+humana.
 
 Los estados v1 y v2 se interpretan como v3 sin escritura automática. Si
 contienen una propuesta histórica, `run-once`, `accept-proposal` y
@@ -233,19 +243,20 @@ Códigos de salida:
 - lock de ejecución;
 - estado escrito de forma atómica con backup;
 - reconciliación v1/v2 explícita, sin inferir decisión ni identidad;
+- recuperación unívoca de una PR creada antes de un fallo de persistencia;
 - identificadores de ejecución con microsegundos;
 - credenciales sanitizadas en evidencia e informes;
-- snapshots históricos del Vault fuera del allowlist.
+- `09-repository-snapshots/` fuera del allowlist y de toda escritura.
 
-## Automatización
+## Operación manual
 
-El comando `run-once` puede ser invocado por el Programador de tareas de
-Windows. El script `scripts/install-scheduled-task.ps1` instala una
-invocación periódica sin mantener un daemon o servicio residente.
+El modo operativo aprobado es `manual-on-demand`: el propietario invoca
+`run-once` después de una sesión de trabajo o cuando decide auditar un
+cambio publicado. No existe scheduler activo ni ejecución residente.
 
-El scheduler no concede autoridad adicional. En `controlled-proposal`,
-cada cambio relevante produce una PR draft y el merge continúa reservado
-al propietario.
+El script `scripts/install-scheduled-task.ps1` se conserva solo como
+artefacto histórico y capacidad opcional no habilitada. Activarlo requiere
+una decisión humana nueva y explícita; no forma parte del baseline vigente.
 
 La especificación operativa completa se encuentra en
 `docs/CONTROLLED_VAULT_PROPOSALS.md`.
@@ -258,8 +269,8 @@ python -m compileall .\src .\tests
 git diff --check
 ```
 
-GitHub Actions repite estas validaciones en cada pull request y en cada cambio
-integrado a `main`.
+GitHub Actions repite estas validaciones en Linux y Windows en cada pull
+request y en cada cambio integrado a `main`.
 
 ## Historial de Gates
 

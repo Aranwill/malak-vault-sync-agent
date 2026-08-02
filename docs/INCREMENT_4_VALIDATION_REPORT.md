@@ -1,5 +1,10 @@
 # Incremento 4 — Informe de implementación y validación local
 
+> Nota posterior (2026-08-02): este informe conserva la evidencia histórica
+> del Incremento 4. No certifica el baseline actual; la auditoría posterior
+> que originó el Incremento Correctivo Integral 5 detectó contratos que esta
+> validación no ejercitaba.
+
 ## Estado del informe
 
 ```text
