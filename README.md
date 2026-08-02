@@ -11,7 +11,7 @@ Controlled Vault Proposals — implementado
 Modos — dry-run / controlled-proposal
 Estado persistente — esquema v3 con reconciliación humana
 Incremento 4 — cierre histórico aprobado; no certifica el baseline actual
-Incremento Correctivo Integral 5 — aprobado y en implementación
+Incremento Correctivo Integral 5 — implementación local completa; validación Windows pendiente
 Operación vigente — manual-on-demand, sin scheduler activo
 ```
 
