@@ -189,3 +189,91 @@ El propietario autorizó publicar este corte mediante una PR draft para
 trasladarlo al equipo Windows y completar la validación nativa. Esta
 autorización no permite mergear, migrar el estado operativo real ni declarar
 cerrado el Incremento 4.
+
+## Epílogo de cierre — 2026-08-01
+
+Este epílogo conserva intacto el informe anterior como evidencia del
+estado existente cuando se publicó la implementación. Las acciones
+pendientes allí registradas fueron completadas posteriormente mediante
+validaciones gobernadas y autorizaciones humanas separadas.
+
+Estado posterior verificado:
+
+```text
+PR #5 del agente: integrada
+Agente main: 1c60eac417f14e7c95e16598266effb9453c7c2d
+Suite de implementación: 230 passed
+Validación nativa de aceptación: completa
+Validación nativa de rechazo: completa
+Migración operativa v2 → v3: completa
+Cierre del Incremento 4: aprobado
+```
+
+### Validación nativa de aceptación
+
+La ruta de aceptación fue ejecutada de forma aislada contra la PR
+histórica #18 del Vault:
+
+- decisión explícita: `accept`;
+- PR: `MERGED`;
+- cabecera:
+  `63f3b981e8f3dc5efd0c61c12b649511d0ac749a`;
+- `last_reconciled_commit` resultante:
+  `b4d1d512fe953d593608391390f82ab500fdc9d6`;
+- campos de propuesta pendientes: `null`;
+- `last_applied_commit`: `null`;
+- estado operativo real: intacto durante esta prueba.
+
+### Validación nativa de rechazo
+
+La ruta de rechazo fue validada mediante la PR descartable #19:
+
+- decisión explícita: `reject`;
+- PR cerrada sin merge;
+- `mergedAt`: `null`;
+- rama remota temporal eliminada;
+- Vault `main` preservado en
+  `f433b9efc426ba52141a1a3daed81795fc666e6f`;
+- `last_reconciled_commit` temporal preservado en
+  `38b0917c5b8dba5c5a4ef4db157e78ac428ab4bc`;
+- estado operativo real: intacto durante esta prueba.
+
+### Migración del estado operativo real
+
+Después de aprobar ambas rutas aisladas, el propietario autorizó y
+ejecutó una única reconciliación real con decisión `accept`.
+
+Resultado:
+
+```text
+schema_version: 3
+last_observed_commit: b4d1d512fe953d593608391390f82ab500fdc9d6
+last_reconciled_commit: b4d1d512fe953d593608391390f82ab500fdc9d6
+pending_proposal_*: null
+last_applied_commit: null
+working tree: limpio
+agent.lock: ausente
+```
+
+El backup generado conserva exactamente el estado v2 de entrada, cuyo
+SHA-256 es:
+
+```text
+2ba6a074986a1d40772fe1d948c8784a5d8ea4ec669b956fb2fa403665f5d71a
+```
+
+El backup histórico anterior, con SHA-256
+`c6bb309f33662cdf06ebe8b6db11adb31fd65f4e334fb65e565681cb06e5fd8c`,
+fue preservado separadamente dentro de la evidencia de recuperación.
+
+La migración no modificó Malāk, el Vault, el Kernel ni ningún repositorio
+remoto.
+
+### Resultado
+
+Las validaciones nativas de aceptación y rechazo, la persistencia segura,
+el backup, los bloqueos, la identidad remota y la migración del estado
+operativo quedaron demostrados.
+
+El cierre definitivo se registra en
+`docs/INCREMENT_4_CLOSURE.md`.
