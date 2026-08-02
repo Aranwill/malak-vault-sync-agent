@@ -501,6 +501,38 @@ def test_pending_proposal_does_not_advance_reconciled_cursor() -> None:
     )
 
 
+def test_bootstrap_reconciliation_establishes_controlled_cursor() -> None:
+    observed_state = SyncState.initial().with_successful_observation(
+        observed_commit=SOURCE_COMMIT,
+        vault_commit=VAULT_COMMIT,
+        run_id="bootstrap-run",
+    )
+
+    reconciled = observed_state.with_bootstrap_reconciliation(
+        expected_commit=SOURCE_COMMIT,
+    )
+
+    assert reconciled.last_observed_commit == SOURCE_COMMIT
+    assert reconciled.last_reconciled_commit == SOURCE_COMMIT
+    assert reconciled.pending_proposal_commit is None
+
+
+def test_bootstrap_reconciliation_rejects_unobserved_commit() -> None:
+    observed_state = SyncState.initial().with_successful_observation(
+        observed_commit=SOURCE_COMMIT,
+        vault_commit=VAULT_COMMIT,
+        run_id="bootstrap-run",
+    )
+
+    with pytest.raises(
+        StateStoreError,
+        match="must match the observed commit",
+    ):
+        observed_state.with_bootstrap_reconciliation(
+            expected_commit=BASE_COMMIT,
+        )
+
+
 def test_pending_proposal_cannot_be_replaced() -> None:
     observed_state = SyncState.initial().with_successful_observation(
         observed_commit=SOURCE_COMMIT,

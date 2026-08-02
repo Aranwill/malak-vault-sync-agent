@@ -33,6 +33,7 @@ from malak_vault_sync.state_store import load_state, save_state
 from malak_vault_sync.validators import (
     ValidationFinding,
     validate_markdown,
+    validate_markdown_frontmatter,
     validate_path,
     validate_relative_links,
     validate_yaml,
@@ -46,6 +47,10 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from malak_vault_sync.polling import poll
+from malak_vault_sync.proposal_reconciliation import (
+    ProposalReconciliationError,
+    discover_remote_proposal,
+)
 
 SleepCallable = Callable[[float], None]
 
@@ -114,12 +119,6 @@ def _run_once_unlocked(
             raise RunnerError(
                 "A pending proposal must be resolved before "
                 "creating another proposal."
-            )
-
-        if not bootstrap and state.last_reconciled_commit is None:
-            raise RunnerError(
-                "Controlled proposal mode requires a human-reconciled "
-                "commit cursor."
             )
 
     if config.source.fetch:
@@ -216,6 +215,40 @@ def _run_once_unlocked(
         require_remote_alignment=True,
     )
 
+    if config.mode == "controlled-proposal" and not bootstrap:
+        if state.last_reconciled_commit is None:
+            raise RunnerError(
+                "Controlled proposal mode requires a human-reconciled "
+                "commit cursor."
+            )
+
+        if (
+            config.proposal is not None
+            and source_snapshot.remote_head
+            != state.last_reconciled_commit
+        ):
+            try:
+                recovered = discover_remote_proposal(
+                    config,
+                    current_source_commit=source_snapshot.remote_head,
+                    reconciled_commit=state.last_reconciled_commit,
+                )
+            except ProposalReconciliationError as exc:
+                raise RunnerError(str(exc)) from exc
+
+            if recovered is not None:
+                recovered_state = state.with_pending_proposal(
+                    base_commit=state.last_reconciled_commit,
+                    proposed_commit=recovered.source_commit,
+                    vault_commit=recovered.head_commit,
+                    pull_request_url=recovered.url,
+                )
+                save_state(config.state.path, recovered_state)
+                raise RunnerError(
+                    "Recovered a remote proposal identity; reconcile the "
+                    "pending proposal before continuing."
+                )
+
     if bootstrap:
         base_commit = source_snapshot.remote_head
     elif config.mode == "controlled-proposal":
@@ -310,6 +343,10 @@ def _run_once_unlocked(
         vault_commit=vault_snapshot.head,
         run_id=evidence.execution.run_id,
     )
+    if config.mode == "controlled-proposal" and bootstrap:
+        next_state = next_state.with_bootstrap_reconciliation(
+            expected_commit=head_commit,
+        )
     if proposal is not None:
         next_state = next_state.with_pending_proposal(
             base_commit=base_commit,
@@ -416,6 +453,9 @@ def _validate_candidates(
         if suffix == ".md":
             findings.extend(
                 validate_markdown(candidate_path)
+            )
+            findings.extend(
+                validate_markdown_frontmatter(candidate_path)
             )
             findings.extend(
                 validate_relative_links(

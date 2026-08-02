@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "malak-vault-sync-agent"
-version = "0.3.0"
+dynamic = ["version"]
 description = "External deterministic synchronization audit tooling for the Malak Project Vault."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,6 +26,9 @@ malak-vault-sync = "malak_vault_sync.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "malak_vault_sync.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

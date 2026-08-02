@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, replace
 
@@ -29,6 +30,244 @@ class PullRequestSnapshot:
     head_commit: str
     state: str
     merged_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RecoverableProposal:
+    url: str
+    head_commit: str
+    branch: str
+    source_commit: str
+    state: str
+    is_draft: bool
+    merged_at: str | None
+
+
+def discover_remote_proposal(
+    config: AgentConfig,
+    *,
+    current_source_commit: str,
+    reconciled_commit: str,
+) -> RecoverableProposal | None:
+    """Recover one agent-owned PR identity after local persistence failed."""
+
+    _require_controlled_proposal_mode(config)
+    assert config.proposal is not None
+
+    normalized_current = _normalize_commit(
+        current_source_commit,
+        label="current source",
+    )
+    normalized_reconciled = _normalize_commit(
+        reconciled_commit,
+        label="reconciled",
+    )
+    command = [
+        config.proposal.github_cli,
+        "pr",
+        "list",
+        "--repo",
+        config.vault.repository,
+        "--state",
+        "all",
+        "--limit",
+        "100",
+        "--json",
+        (
+            "url,headRefOid,headRefName,baseRefName,baseRefOid,state,"
+            "isDraft,mergedAt,body"
+        ),
+    ]
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=config.vault.local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=config.limits.command_timeout_seconds,
+            check=False,
+            shell=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise ProposalReconciliationError(
+            f"Command could not be executed: {config.proposal.github_cli}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ProposalReconciliationError(
+            f"Command timed out: {config.proposal.github_cli}"
+        ) from exc
+
+    if completed.returncode != 0:
+        detail = (
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or "unknown command error"
+        )
+        raise ProposalReconciliationError(
+            "GitHub proposal recovery failed: "
+            f"{sanitize_text(detail)}"
+        )
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ProposalReconciliationError(
+            "GitHub CLI returned invalid proposal recovery metadata."
+        ) from exc
+
+    if not isinstance(payload, list):
+        raise ProposalReconciliationError(
+            "GitHub CLI returned invalid proposal recovery metadata."
+        )
+    if any(not isinstance(item, dict) for item in payload):
+        raise ProposalReconciliationError(
+            "GitHub CLI returned invalid proposal recovery metadata."
+        )
+
+    prefix = f"{config.proposal.branch_prefix}-"
+    open_matching: list[dict[str, object]] = []
+    historical_matching: list[dict[str, object]] = []
+
+    for item in payload:
+        head_branch = item.get("headRefName")
+        body = item.get("body")
+        state = item.get("state")
+        is_draft = item.get("isDraft")
+
+        if (
+            not isinstance(head_branch, str)
+            or not head_branch.startswith(prefix)
+            or not isinstance(body, str)
+            or not isinstance(state, str)
+            or not isinstance(is_draft, bool)
+        ):
+            continue
+
+        body_source = _body_commit(body, "Malāk HEAD")
+        body_base = _body_commit(body, "Malāk base")
+        is_open_draft = state.upper() == "OPEN" and is_draft
+        is_current_source = body_source == normalized_current
+        has_reconciled_base = body_base == normalized_reconciled
+
+        if is_open_draft and (is_current_source or has_reconciled_base):
+            open_matching.append(item)
+        elif has_reconciled_base:
+            historical_matching.append(item)
+
+    matching = open_matching or historical_matching
+
+    if not matching:
+        return None
+    if len(matching) != 1:
+        raise ProposalReconciliationError(
+            "Remote proposal identity is ambiguous."
+        )
+
+    item = matching[0]
+    url = item.get("url")
+    head_commit = item.get("headRefOid")
+    head_branch = item.get("headRefName")
+    base_branch = item.get("baseRefName")
+    base_commit = item.get("baseRefOid")
+    state = item.get("state")
+    is_draft = item.get("isDraft")
+    merged_at = item.get("mergedAt")
+    body = item.get("body")
+
+    if (
+        not isinstance(url, str)
+        or not isinstance(head_commit, str)
+        or not isinstance(head_branch, str)
+        or not isinstance(base_branch, str)
+        or not isinstance(base_commit, str)
+        or not isinstance(state, str)
+        or not isinstance(is_draft, bool)
+        or (merged_at is not None and not isinstance(merged_at, str))
+        or not isinstance(body, str)
+    ):
+        raise ProposalReconciliationError(
+            "GitHub CLI returned incomplete proposal recovery metadata."
+        )
+
+    normalized_state = state.upper()
+    expected_url_prefix = (
+        "https://github.com/Aranwill/"
+        "malak-project-vault/pull/"
+    )
+    normalized_head = head_commit.lower()
+    normalized_vault_base = base_commit.lower()
+    body_source = _body_commit(body, "Malāk HEAD")
+    body_reconciled = _body_commit(body, "Malāk base")
+    body_vault_base = _body_commit(body, "Vault base")
+    expected_branch = (
+        f"{config.proposal.branch_prefix}-"
+        f"{body_source[:8]}"
+        if body_source is not None
+        else ""
+    )
+
+    if (
+        body_source is None
+        or head_branch != expected_branch
+        or base_branch != config.vault.branch
+        or not url.startswith(expected_url_prefix)
+        or len(normalized_head) != 40
+        or any(
+            character not in "0123456789abcdef"
+            for character in normalized_head
+        )
+        or len(normalized_vault_base) != 40
+        or any(
+            character not in "0123456789abcdef"
+            for character in normalized_vault_base
+        )
+        or body_vault_base != normalized_vault_base
+        or (
+            body_source != normalized_current
+            and body_reconciled != normalized_reconciled
+        )
+        or normalized_state not in {"OPEN", "CLOSED", "MERGED"}
+        or (normalized_state == "OPEN" and not is_draft)
+        or (normalized_state == "MERGED" and merged_at is None)
+        or (normalized_state == "CLOSED" and merged_at is not None)
+    ):
+        raise ProposalReconciliationError(
+            "Remote proposal does not match the governed identity."
+        )
+
+    return RecoverableProposal(
+        url=url,
+        head_commit=normalized_head,
+        branch=head_branch,
+        source_commit=body_source,
+        state=normalized_state,
+        is_draft=is_draft,
+        merged_at=merged_at,
+    )
+
+
+def _normalize_commit(value: str, *, label: str) -> str:
+    normalized = value.strip().lower()
+    if (
+        len(normalized) != 40
+        or any(character not in "0123456789abcdef" for character in normalized)
+    ):
+        raise ProposalReconciliationError(
+            f"Remote proposal recovery requires a full {label} commit SHA."
+        )
+    return normalized
+
+
+def _body_commit(body: str, label: str) -> str | None:
+    match = re.search(
+        rf"^- {re.escape(label)}: `([0-9A-Fa-f]{{40}})`$",
+        body,
+        re.MULTILINE,
+    )
+    return match.group(1).lower() if match is not None else None
 
 
 def reconcile_migrated_proposal(

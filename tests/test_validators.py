@@ -9,6 +9,7 @@ from malak_vault_sync.validators import (
     has_errors,
     validate_hash_manifest,
     validate_markdown,
+    validate_markdown_frontmatter,
     validate_path,
     validate_relative_links,
     validate_yaml,
@@ -100,6 +101,60 @@ def test_validate_markdown_rejects_null_byte(
 
     assert has_errors(findings)
     assert findings[0].code == "MARKDOWN_NULL_BYTE"
+
+
+def test_validate_markdown_frontmatter_accepts_mapping(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "document.md"
+    path.write_text(
+        "---\ntitle: Test\nstatus: active\n---\n\n# Test\n",
+        encoding="utf-8",
+    )
+
+    assert validate_markdown_frontmatter(path) == ()
+
+
+def test_validate_markdown_frontmatter_rejects_duplicate_keys(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "document.md"
+    path.write_text(
+        "---\ntitle: First\ntitle: Second\n---\n",
+        encoding="utf-8",
+    )
+
+    findings = validate_markdown_frontmatter(path)
+
+    assert has_errors(findings)
+    assert findings[0].code == "MARKDOWN_FRONTMATTER_INVALID"
+
+
+def test_validate_markdown_frontmatter_rejects_missing_delimiter(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "document.md"
+    path.write_text("---\ntitle: Test\n", encoding="utf-8")
+
+    findings = validate_markdown_frontmatter(path)
+
+    assert has_errors(findings)
+    assert findings[0].code == "MARKDOWN_FRONTMATTER_UNCLOSED"
+
+
+def test_validate_markdown_frontmatter_rejects_missing_opening_delimiter(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "document.md"
+    path.write_text(
+        "title: Test\n---\n\n# Test\n",
+        encoding="utf-8",
+    )
+
+    findings = validate_markdown_frontmatter(path)
+
+    assert has_errors(findings)
+    assert findings[0].code == "MARKDOWN_FRONTMATTER_MISSING"
 
 
 def test_validate_yaml_accepts_valid_document(
@@ -206,6 +261,52 @@ def test_validate_relative_links_ignores_external_links(
         source,
         root,
     ) == ()
+
+
+def test_validate_relative_links_accepts_obsidian_wikilink(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "vault"
+    target = root / "02-current-baseline" / "CURRENT_BASELINE.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Baseline\n", encoding="utf-8")
+    source = root / "source.md"
+    source.write_text(
+        "[[02-current-baseline/CURRENT_BASELINE|Baseline]]\n",
+        encoding="utf-8",
+    )
+
+    assert validate_relative_links(source, root) == ()
+
+
+def test_validate_relative_links_accepts_extensionless_dotted_wikilink(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "vault"
+    target = root / "04-sprints" / "SPRINT-7.4-CLOSURE.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Closure\n", encoding="utf-8")
+    source = root / "source.md"
+    source.write_text(
+        "[[04-sprints/SPRINT-7.4-CLOSURE|Closure]]\n",
+        encoding="utf-8",
+    )
+
+    assert validate_relative_links(source, root) == ()
+
+
+def test_validate_relative_links_rejects_missing_wikilink(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "vault"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_text("[[missing/document|Missing]]\n", encoding="utf-8")
+
+    findings = validate_relative_links(source, root)
+
+    assert has_errors(findings)
+    assert findings[0].code == "WIKILINK_TARGET_MISSING"
 
 
 def test_validate_hash_manifest_accepts_valid_hash(

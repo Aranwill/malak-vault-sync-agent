@@ -9,12 +9,20 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from malak_vault_sync import __version__
 from malak_vault_sync.audit import AuditReport
 from malak_vault_sync.candidate_resolver import (
     DocumentCandidate,
     is_allowed_vault_path,
 )
 from malak_vault_sync.evidence import EvidenceManifest, sanitize_text
+from malak_vault_sync.validators import (
+    ValidationFinding,
+    has_errors,
+    validate_markdown,
+    validate_markdown_frontmatter,
+    validate_relative_links,
+)
 
 
 class VaultProposalError(RuntimeError):
@@ -135,6 +143,7 @@ def prepare_vault_proposal(
                 candidates,
                 source_projection,
             )
+            _validate_written_projections(worktree, modified_paths)
             _git(worktree, "diff", "--check", timeout_seconds=timeout_seconds)
             _git(
                 worktree,
@@ -170,6 +179,10 @@ def prepare_vault_proposal(
                 worktree,
                 report_path=report_path,
                 run_id=evidence.execution.run_id,
+            )
+            _validate_written_projections(
+                worktree,
+                (report_path, index_path),
             )
             _git(worktree, "diff", "--check", timeout_seconds=timeout_seconds)
             _git(
@@ -671,7 +684,7 @@ def _write_audit_report(
             "type: synchronization-audit-report",
             "status: proposed",
             f"created: {generated:%Y-%m-%d}",
-            "agent_version: 0.3.0",
+            f"agent_version: {__version__}",
             "policy_version: 1.1",
             "execution_mode: controlled-proposal",
             "official_repository: Aranwill/jarvis",
@@ -683,7 +696,7 @@ def _write_audit_report(
             f"vault_base_head: {evidence.vault_snapshot.remote_head}",
             f"vault_work_branch: {branch}",
             f"vault_content_commit: {content_commit}",
-            "triggered_by: scheduled-detection",
+            "triggered_by: manual-on-demand",
             "operational_authority: none",
             "human_review_required: true",
             "merge_allowed: false",
@@ -796,6 +809,32 @@ def _validate_candidates(
             raise VaultProposalError(
                 f"Candidate path is not allowlisted: {candidate.path}"
             )
+
+
+def _validate_written_projections(
+    worktree: Path,
+    modified_paths: tuple[str, ...],
+) -> None:
+    findings: list[ValidationFinding] = []
+
+    for relative_path in modified_paths:
+        path = worktree / relative_path
+        findings.extend(validate_markdown(path))
+        findings.extend(validate_markdown_frontmatter(path))
+        findings.extend(validate_relative_links(path, worktree))
+
+    final_findings = tuple(findings)
+    if not has_errors(final_findings):
+        return
+
+    details = "; ".join(
+        f"{finding.code}: {finding.path or 'unknown'}"
+        for finding in final_findings
+        if finding.severity == "error"
+    )
+    raise VaultProposalError(
+        "Generated Vault projection failed final validation: " + details
+    )
 
 
 def _preflight_github_cli(
@@ -921,6 +960,7 @@ def _open_draft_pr(
             "## Evidencia",
             "",
             f"- Run ID: `{evidence.execution.run_id}`",
+            f"- Malāk base: `{evidence.commit_range.base_commit}`",
             f"- Malāk HEAD: `{evidence.commit_range.head_commit}`",
             f"- Vault base: `{evidence.vault_snapshot.remote_head}`",
             f"- Commit de contenido: `{content_commit}`",

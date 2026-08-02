@@ -28,6 +28,10 @@ _MARKDOWN_LINK_PATTERN = re.compile(
     r"(?<!!)\[[^\]]*]\(([^)]+)\)"
 )
 
+_WIKILINK_PATTERN = re.compile(
+    r"!?\[\[([^\]]+)]]"
+)
+
 _FENCE_PATTERN = re.compile(
     r"^\s*(```|~~~)",
     re.MULTILINE,
@@ -192,6 +196,78 @@ def validate_markdown(
     return tuple(findings)
 
 
+def validate_markdown_frontmatter(
+    path: str | Path,
+) -> tuple[ValidationFinding, ...]:
+    """Require and validate YAML frontmatter in governed Markdown."""
+
+    file_path = Path(path)
+    findings: list[ValidationFinding] = []
+    text = _read_utf8_text(file_path, findings)
+
+    if text is None:
+        return tuple(findings)
+
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return (
+            ValidationFinding(
+                severity="error",
+                code="MARKDOWN_FRONTMATTER_MISSING",
+                message="Governed Markdown requires YAML frontmatter.",
+                path=str(file_path),
+            ),
+        )
+
+    closing_index = next(
+        (
+            index
+            for index, line in enumerate(lines[1:], start=1)
+            if line.strip() == "---"
+        ),
+        None,
+    )
+
+    if closing_index is None:
+        return (
+            ValidationFinding(
+                severity="error",
+                code="MARKDOWN_FRONTMATTER_UNCLOSED",
+                message="Markdown YAML frontmatter is not closed.",
+                path=str(file_path),
+            ),
+        )
+
+    frontmatter = "\n".join(lines[1:closing_index])
+
+    try:
+        payload = yaml.load(
+            frontmatter,
+            Loader=_UniqueKeyLoader,
+        )
+    except yaml.YAMLError as exc:
+        return (
+            ValidationFinding(
+                severity="error",
+                code="MARKDOWN_FRONTMATTER_INVALID",
+                message=_single_line_message(exc),
+                path=str(file_path),
+            ),
+        )
+
+    if not isinstance(payload, dict):
+        return (
+            ValidationFinding(
+                severity="error",
+                code="MARKDOWN_FRONTMATTER_NOT_MAPPING",
+                message="Markdown YAML frontmatter must be a mapping.",
+                path=str(file_path),
+            ),
+        )
+
+    return ()
+
+
 def validate_yaml(
     path: str | Path,
 ) -> tuple[ValidationFinding, ...]:
@@ -283,6 +359,49 @@ def validate_relative_links(
                     message=(
                         "Relative link target does not exist."
                     ),
+                    path=normalized_target,
+                )
+            )
+
+    for raw_target in _WIKILINK_PATTERN.findall(text):
+        target = raw_target.split("|", maxsplit=1)[0].strip()
+        normalized_target = unquote(
+            target.split("#", maxsplit=1)[0]
+        ).strip()
+
+        if not normalized_target:
+            continue
+
+        target_path = root_path / normalized_target
+        markdown_target = Path(f"{target_path}.md")
+        if (
+            not target_path.is_file()
+            and (
+                markdown_target.is_file()
+                or target_path.suffix == ""
+            )
+        ):
+            target_path = markdown_target
+
+        path_findings = validate_path(
+            root_path,
+            target_path,
+            follow_symlinks=False,
+        )
+        findings.extend(path_findings)
+
+        if any(
+            finding.severity == "error"
+            for finding in path_findings
+        ):
+            continue
+
+        if not target_path.is_file():
+            findings.append(
+                ValidationFinding(
+                    severity="error",
+                    code="WIKILINK_TARGET_MISSING",
+                    message="Obsidian wikilink target does not exist.",
                     path=normalized_target,
                 )
             )

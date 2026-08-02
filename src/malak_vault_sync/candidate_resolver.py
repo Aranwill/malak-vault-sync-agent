@@ -51,7 +51,7 @@ _ALLOWED_VAULT_PATHS = {
 }
 
 _DENIED_VAULT_PATTERNS = (
-    "09-snapshots/**",
+    "09-repository-snapshots/**",
     ".git/**",
     "var/**",
     "**/.env",
@@ -68,6 +68,7 @@ _DEFAULT_RULES = (
     CandidateRule(
         rule_id="baseline-source-change",
         source_patterns=(
+            "AGENTS.md",
             "README.md",
             "CHANGELOG.md",
             "ROADMAP.md",
@@ -75,6 +76,13 @@ _DEFAULT_RULES = (
             "docs/project/**",
             "documents/projects/jarvis/releases/**",
             "documents/projects/jarvis/sprints/**",
+            "documents/projects/jarvis/changelog.md",
+            "documents/projects/jarvis/decisiones.md",
+            "documents/projects/jarvis/ideas.md",
+            "documents/projects/jarvis/model_benchmarks.md",
+            "documents/projects/jarvis/models.md",
+            "documents/projects/jarvis/proyecto_jarvis_base.md",
+            "documents/projects/jarvis/setup.md",
         ),
         vault_candidates=(
             "02-current-baseline/CURRENT_BASELINE.md",
@@ -86,10 +94,12 @@ _DEFAULT_RULES = (
     CandidateRule(
         rule_id="architecture-change",
         source_patterns=(
+            "src/app/**",
             "src/malak/**",
             "docs/architecture/**",
             "docs/operations/**",
             "documents/projects/jarvis/architecture/**",
+            "docs/knowledge/architecture/**",
         ),
         vault_candidates=(
             "01-architecture/CURRENT_COMPONENTS_MAP.md",
@@ -115,6 +125,8 @@ _DEFAULT_RULES = (
         source_patterns=(
             "documents/projects/jarvis/governance/**",
             "documents/projects/jarvis/decisions/**",
+            "documents/projects/jarvis/decisiones.md",
+            "documents/projects/jarvis/ideas.md",
             "documents/projects/jarvis/adr/**",
             "docs/governance/**",
             "docs/architecture/decisions/**",
@@ -142,6 +154,36 @@ _DEFAULT_RULES = (
             "08-session-context/MALAK_SESSION_CONTEXT.md",
         ),
         priority="high",
+    ),
+    CandidateRule(
+        rule_id="knowledge-change",
+        source_patterns=(
+            "docs/knowledge/**",
+            "documents/projects/jarvis/model_benchmarks.md",
+            "documents/projects/jarvis/models.md",
+            "documents/projects/jarvis/setup.md",
+        ),
+        vault_candidates=(
+            "08-session-context/MALAK_SESSION_CONTEXT.md",
+            "10-knowledge-index/KNOWLEDGE_INDEX.md",
+        ),
+        priority="medium",
+    ),
+    CandidateRule(
+        rule_id="operational-tooling-change",
+        source_patterns=(
+            ".github/**",
+            ".gitignore",
+            "configs/**",
+            "docs/development/**",
+            "examples/**",
+            "scripts/**",
+        ),
+        vault_candidates=(
+            "02-current-baseline/CURRENT_BASELINE.md",
+            "08-session-context/MALAK_SESSION_CONTEXT.md",
+        ),
+        priority="medium",
     ),
 )
 

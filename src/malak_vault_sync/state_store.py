@@ -125,6 +125,46 @@ class SyncState:
             ),
         )
 
+    def with_bootstrap_reconciliation(
+        self,
+        *,
+        expected_commit: str,
+    ) -> "SyncState":
+        """Establish the first controlled cursor without creating a proposal."""
+
+        normalized_commit = _validate_commit_sha(
+            expected_commit,
+            "expected_commit",
+        )
+
+        if self.last_observed_commit != normalized_commit:
+            raise StateStoreError(
+                "Bootstrap reconciliation must match the observed commit."
+            )
+
+        if any(
+            value is not None
+            for value in (
+                self.pending_proposal_base_commit,
+                self.pending_proposal_commit,
+                self.pending_proposal_vault_commit,
+                self.pending_proposal_pull_request_url,
+            )
+        ):
+            raise StateStoreError(
+                "Bootstrap reconciliation cannot coexist with a proposal."
+            )
+
+        if self.last_reconciled_commit not in {None, normalized_commit}:
+            raise StateStoreError(
+                "Bootstrap reconciliation cannot replace an existing cursor."
+            )
+
+        return replace(
+            self,
+            last_reconciled_commit=normalized_commit,
+        )
+
     def with_migrated_proposal_identity(
         self,
         *,

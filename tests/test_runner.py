@@ -1,5 +1,6 @@
 ﻿from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -239,6 +240,11 @@ def _install_common_stubs(
         runner_module,
         "resolve_candidates",
         lambda changed_files: (),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "discover_remote_proposal",
+        lambda *args, **kwargs: None,
     )
 
     audit_directory = tmp_path / "reports" / RUN_ID
@@ -804,7 +810,7 @@ def test_controlled_bootstrap_does_not_create_pending_proposal(
 
     assert result.bootstrap is True
     assert result.proposal is None
-    assert saved_states[0].last_reconciled_commit is None
+    assert saved_states[0].last_reconciled_commit == SOURCE_HEAD
     assert saved_states[0].pending_proposal_base_commit is None
     assert saved_states[0].pending_proposal_commit is None
     assert saved_states[0].pending_proposal_vault_commit is None
@@ -833,6 +839,71 @@ def test_controlled_run_requires_reconciled_cursor(
         match="human-reconciled commit cursor",
     ):
         run_once(config)
+
+
+def test_controlled_run_recovers_remote_proposal_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_config = _make_config(tmp_path)
+    config = replace(
+        base_config,
+        mode="controlled-proposal",
+        proposal=ProposalConfig(
+            branch_prefix="agent/vault-sync",
+            push=True,
+            open_draft_pr=True,
+            github_cli="gh",
+        ),
+    )
+    state = _make_reconciled_state()
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+    )
+    recovered = SimpleNamespace(
+        url=PENDING_PR_URL,
+        head_commit=PENDING_VAULT_COMMIT,
+        source_commit=REMOTE_SOURCE_HEAD,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "discover_remote_proposal",
+        lambda *args, **kwargs: recovered,
+    )
+    saved_states: list[SyncState] = []
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, next_state: saved_states.append(next_state),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "prepare_vault_proposal",
+        lambda **kwargs: pytest.fail(
+            "Recovery must stop before creating another proposal."
+        ),
+    )
+
+    with pytest.raises(
+        RunnerError,
+        match="Recovered a remote proposal identity",
+    ):
+        run_once(config)
+
+    assert len(saved_states) == 1
+    assert saved_states[0].last_reconciled_commit == BASE_COMMIT
+    assert saved_states[0].pending_proposal_base_commit == BASE_COMMIT
+    assert saved_states[0].pending_proposal_commit == REMOTE_SOURCE_HEAD
+    assert (
+        saved_states[0].pending_proposal_vault_commit
+        == PENDING_VAULT_COMMIT
+    )
+    assert (
+        saved_states[0].pending_proposal_pull_request_url
+        == PENDING_PR_URL
+    )
 
 
 def test_controlled_run_rejects_unresolved_pending_proposal(

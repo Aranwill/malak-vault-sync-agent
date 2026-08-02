@@ -26,6 +26,7 @@ from malak_vault_sync.vault_writer import (
     _render_projection,
     _sprint_record_sort_key,
     _upsert_managed_block,
+    _validate_written_projections,
     _write_audit_report,
     prepare_vault_proposal,
     synchronize_vault_checkout,
@@ -33,6 +34,46 @@ from malak_vault_sync.vault_writer import (
     VaultProposalError,
 )
 import malak_vault_sync.vault_writer as writer_module
+
+
+def test_final_projection_validation_accepts_valid_document(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "08-session-context" / "MALAK_SESSION_CONTEXT.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Context\n", encoding="utf-8")
+    baseline = tmp_path / "02-current-baseline" / "CURRENT_BASELINE.md"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text(
+        "---\ntitle: Baseline\n---\n\n"
+        "[[08-session-context/MALAK_SESSION_CONTEXT|Context]]\n",
+        encoding="utf-8",
+    )
+
+    _validate_written_projections(
+        tmp_path,
+        ("02-current-baseline/CURRENT_BASELINE.md",),
+    )
+
+
+def test_final_projection_validation_rejects_generated_invalid_content(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "02-current-baseline" / "CURRENT_BASELINE.md"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text(
+        "---\ntitle: [broken\n---\n\n[[missing/document]]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        VaultProposalError,
+        match="failed final validation",
+    ):
+        _validate_written_projections(
+            tmp_path,
+            ("02-current-baseline/CURRENT_BASELINE.md",),
+        )
 
 
 def _evidence(tmp_path: Path) -> EvidenceManifest:
@@ -166,6 +207,8 @@ def test_audit_report_references_prior_content_commit(
     assert f"Commit de contenido: `{content_commit}`" in content
     assert "human_review_required: true" in content
     assert "merge_allowed: false" in content
+    assert "agent_version: 0.3.0" in content
+    assert "triggered_by: manual-on-demand" in content
 
 
 def test_synchronize_vault_checkout_fast_forwards_clean_main(
@@ -244,7 +287,10 @@ def test_prepare_proposal_commits_content_before_audit(
     )
     audit_index = vault / "07-audits" / "AUDIT_INDEX.md"
     audit_index.parent.mkdir(parents=True)
-    audit_index.write_text("# Auditorías\n", encoding="utf-8")
+    audit_index.write_text(
+        "---\ntitle: Auditorías\n---\n\n# Auditorías\n",
+        encoding="utf-8",
+    )
     _run("git", "add", ".", cwd=vault)
     _run("git", "commit", "-m", "baseline", cwd=vault)
     _run("git", "remote", "add", "origin", str(remote), cwd=vault)
@@ -308,6 +354,21 @@ def test_prepare_proposal_commits_content_before_audit(
         "_open_draft_pr",
         lambda *args, **kwargs: "https://github.com/example/pr/1",
     )
+    validation_calls: list[tuple[str, ...]] = []
+    original_validator = writer_module._validate_written_projections
+
+    def record_validation(
+        worktree: Path,
+        modified_paths: tuple[str, ...],
+    ) -> None:
+        validation_calls.append(modified_paths)
+        original_validator(worktree, modified_paths)
+
+    monkeypatch.setattr(
+        writer_module,
+        "_validate_written_projections",
+        record_validation,
+    )
 
     proposal = prepare_vault_proposal(
         vault_root=vault,
@@ -342,6 +403,13 @@ def test_prepare_proposal_commits_content_before_audit(
     )
     assert proposal.content_commit in report_content
     assert proposal.pull_request_url.endswith("/1")
+    assert validation_calls == [
+        (candidate.path,),
+        (
+            proposal.report_path,
+            "07-audits/AUDIT_INDEX.md",
+        ),
+    ]
     assert _run(
         "git",
         "branch",
@@ -368,7 +436,10 @@ def test_prepare_proposal_rolls_back_branch_when_pr_creation_fails(
     )
     audit_index = vault / "07-audits" / "AUDIT_INDEX.md"
     audit_index.parent.mkdir(parents=True)
-    audit_index.write_text("# Auditorías\n", encoding="utf-8")
+    audit_index.write_text(
+        "---\ntitle: Auditorías\n---\n\n# Auditorías\n",
+        encoding="utf-8",
+    )
     _run("git", "add", ".", cwd=vault)
     _run("git", "commit", "-m", "baseline", cwd=vault)
     _run("git", "remote", "add", "origin", str(remote), cwd=vault)

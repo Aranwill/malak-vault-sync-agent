@@ -124,7 +124,7 @@ def test_no_matching_rule_returns_empty_tuple() -> None:
         (
             ChangedFile(
                 status="M",
-                path="examples/demo.txt",
+                path="documents/projects/jarvis/archive/legacy.md",
             ),
         )
     )
@@ -148,6 +148,29 @@ def test_current_governance_path_returns_candidates() -> None:
         "05-decisions/PENDING_DECISIONS.md",
         "08-session-context/MALAK_SESSION_CONTEXT.md",
     }
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    (
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".gitignore",
+        "AGENTS.md",
+        "configs/models.yaml",
+        "docs/development/development_checklist.md",
+        "docs/knowledge/recipes/REC-001.md",
+        "documents/projects/jarvis/ideas.md",
+        "examples/hello_kernel.py",
+        "scripts/run.ps1",
+        "src/app/main.py",
+    ),
+)
+def test_current_malak_paths_are_covered(source_path: str) -> None:
+    candidates = resolve_candidates(
+        (ChangedFile(status="M", path=source_path),)
+    )
+
+    assert candidates
 
 
 def test_rename_considers_previous_and_current_paths() -> None:
@@ -221,11 +244,11 @@ def test_absolute_source_path_is_rejected() -> None:
 
 def test_snapshot_path_is_denied() -> None:
     assert is_denied_vault_path(
-        "09-snapshots/2026-07-22.md"
+        "09-repository-snapshots/2026-07-22.md"
     ) is True
 
     assert is_allowed_vault_path(
-        "09-snapshots/2026-07-22.md"
+        "09-repository-snapshots/2026-07-22.md"
     ) is False
 
 
@@ -263,7 +286,7 @@ def test_snapshot_candidate_rule_is_rejected() -> None:
         rule_id="snapshot-candidate",
         source_patterns=("README.md",),
         vault_candidates=(
-            "09-snapshots/2026-07-22.md",
+            "09-repository-snapshots/2026-07-22.md",
         ),
         priority="high",
     )
@@ -335,7 +358,7 @@ def test_invalid_priority_is_rejected() -> None:
 def test_default_rules_are_available() -> None:
     rules = default_rules()
 
-    assert len(rules) == 5
+    assert len(rules) == 7
     assert {
         rule.rule_id
         for rule in rules
@@ -345,4 +368,6 @@ def test_default_rules_are_available() -> None:
         "test-change",
         "governance-change",
         "security-change",
+        "knowledge-change",
+        "operational-tooling-change",
     }
