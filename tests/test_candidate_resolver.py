@@ -221,11 +221,11 @@ def test_absolute_source_path_is_rejected() -> None:
 
 def test_snapshot_path_is_denied() -> None:
     assert is_denied_vault_path(
-        "09-snapshots/2026-07-22.md"
+        "09-repository-snapshots/2026-07-22.md"
     ) is True
 
     assert is_allowed_vault_path(
-        "09-snapshots/2026-07-22.md"
+        "09-repository-snapshots/2026-07-22.md"
     ) is False
 
 
@@ -263,7 +263,7 @@ def test_snapshot_candidate_rule_is_rejected() -> None:
         rule_id="snapshot-candidate",
         source_patterns=("README.md",),
         vault_candidates=(
-            "09-snapshots/2026-07-22.md",
+            "09-repository-snapshots/2026-07-22.md",
         ),
         priority="high",
     )

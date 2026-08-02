@@ -26,6 +26,7 @@ from malak_vault_sync.vault_writer import (
     _render_projection,
     _sprint_record_sort_key,
     _upsert_managed_block,
+    _validate_written_projections,
     _write_audit_report,
     prepare_vault_proposal,
     synchronize_vault_checkout,
@@ -33,6 +34,46 @@ from malak_vault_sync.vault_writer import (
     VaultProposalError,
 )
 import malak_vault_sync.vault_writer as writer_module
+
+
+def test_final_projection_validation_accepts_valid_document(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "08-session-context" / "MALAK_SESSION_CONTEXT.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Context\n", encoding="utf-8")
+    baseline = tmp_path / "02-current-baseline" / "CURRENT_BASELINE.md"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text(
+        "---\ntitle: Baseline\n---\n\n"
+        "[[08-session-context/MALAK_SESSION_CONTEXT|Context]]\n",
+        encoding="utf-8",
+    )
+
+    _validate_written_projections(
+        tmp_path,
+        ("02-current-baseline/CURRENT_BASELINE.md",),
+    )
+
+
+def test_final_projection_validation_rejects_generated_invalid_content(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "02-current-baseline" / "CURRENT_BASELINE.md"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text(
+        "---\ntitle: [broken\n---\n\n[[missing/document]]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        VaultProposalError,
+        match="failed final validation",
+    ):
+        _validate_written_projections(
+            tmp_path,
+            ("02-current-baseline/CURRENT_BASELINE.md",),
+        )
 
 
 def _evidence(tmp_path: Path) -> EvidenceManifest:

@@ -33,6 +33,7 @@ from malak_vault_sync.state_store import load_state, save_state
 from malak_vault_sync.validators import (
     ValidationFinding,
     validate_markdown,
+    validate_markdown_frontmatter,
     validate_path,
     validate_relative_links,
     validate_yaml,
@@ -416,6 +417,9 @@ def _validate_candidates(
         if suffix == ".md":
             findings.extend(
                 validate_markdown(candidate_path)
+            )
+            findings.extend(
+                validate_markdown_frontmatter(candidate_path)
             )
             findings.extend(
                 validate_relative_links(

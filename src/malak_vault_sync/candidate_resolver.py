@@ -51,7 +51,7 @@ _ALLOWED_VAULT_PATHS = {
 }
 
 _DENIED_VAULT_PATTERNS = (
-    "09-snapshots/**",
+    "09-repository-snapshots/**",
     ".git/**",
     "var/**",
     "**/.env",

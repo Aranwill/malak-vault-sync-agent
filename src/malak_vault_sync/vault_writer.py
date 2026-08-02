@@ -15,6 +15,13 @@ from malak_vault_sync.candidate_resolver import (
     is_allowed_vault_path,
 )
 from malak_vault_sync.evidence import EvidenceManifest, sanitize_text
+from malak_vault_sync.validators import (
+    ValidationFinding,
+    has_errors,
+    validate_markdown,
+    validate_markdown_frontmatter,
+    validate_relative_links,
+)
 
 
 class VaultProposalError(RuntimeError):
@@ -135,6 +142,7 @@ def prepare_vault_proposal(
                 candidates,
                 source_projection,
             )
+            _validate_written_projections(worktree, modified_paths)
             _git(worktree, "diff", "--check", timeout_seconds=timeout_seconds)
             _git(
                 worktree,
@@ -796,6 +804,32 @@ def _validate_candidates(
             raise VaultProposalError(
                 f"Candidate path is not allowlisted: {candidate.path}"
             )
+
+
+def _validate_written_projections(
+    worktree: Path,
+    modified_paths: tuple[str, ...],
+) -> None:
+    findings: list[ValidationFinding] = []
+
+    for relative_path in modified_paths:
+        path = worktree / relative_path
+        findings.extend(validate_markdown(path))
+        findings.extend(validate_markdown_frontmatter(path))
+        findings.extend(validate_relative_links(path, worktree))
+
+    final_findings = tuple(findings)
+    if not has_errors(final_findings):
+        return
+
+    details = "; ".join(
+        f"{finding.code}: {finding.path or 'unknown'}"
+        for finding in final_findings
+        if finding.severity == "error"
+    )
+    raise VaultProposalError(
+        "Generated Vault projection failed final validation: " + details
+    )
 
 
 def _preflight_github_cli(
