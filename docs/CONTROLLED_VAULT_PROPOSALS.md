@@ -18,7 +18,8 @@ Ante un cambio publicado en `Aranwill/jarvis/main`, el agente:
 7. valida nuevamente el contenido final, su frontmatter YAML, enlaces y
    wikilinks, y solo entonces crea el commit documental;
 8. genera un informe auditable que referencia ese commit;
-9. crea un segundo commit con el informe y su entrada en el índice;
+9. valida el informe final y su entrada en el índice, y crea el segundo
+   commit únicamente cuando ambos documentos son válidos;
 10. ejecuta `push` sobre una rama `agent/vault-sync-<SHA8>`;
 11. abre una PR draft mediante GitHub CLI;
 12. guarda en estado v3 el rango y la identidad exacta de la propuesta
@@ -108,11 +109,14 @@ no persiste el nuevo estado observado. La siguiente corrida puede
 reintentarlo sin reutilizar una rama huérfana.
 
 Si la PR draft se crea pero falla la persistencia local posterior, la
-siguiente ejecución consulta la rama determinista
-`agent/vault-sync-<SHA8>`. Solo recupera la propuesta cuando existe una
-única PR y coinciden repositorio, rama, base, HEAD remoto, cuerpo con el
-SHA completo de Malāk, estado y condición de borrador. Después persiste la
-identidad pendiente y se detiene; nunca crea una segunda propuesta.
+siguiente ejecución revisa las ramas deterministas
+`agent/vault-sync-<SHA8>`. La identidad del cuerpo conserva tanto la base
+reconciliada como el HEAD propuesto de Malāk, por lo que la recuperación
+sigue siendo posible aunque `main` avance después del fallo. Solo recupera
+la propuesta cuando existe una coincidencia unívoca y concuerdan
+repositorio, rama, base del Vault, HEAD remoto, cuerpo, estado y condición
+de borrador. Después persiste el rango original y su identidad, y se
+detiene; nunca crea una segunda propuesta.
 
 ## Ejecución manual vigente
 

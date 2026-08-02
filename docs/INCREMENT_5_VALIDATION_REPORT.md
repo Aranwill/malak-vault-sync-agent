@@ -3,12 +3,12 @@
 ## Estado
 
 ```text
-Implementación local: completa
-Validación automatizada Linux: completa
+Implementación local: completa en la rama de la PR #7
+Validación automatizada Linux: completa sobre el HEAD publicado
 Validación de documentos reales del Vault: completa
-CI Windows/Linux: configurado; ejecución remota pendiente
+CI Windows/Linux: gate obligatorio sobre cada HEAD final de la PR
 Validación nativa Windows con gh: pendiente
-Publicación como PR draft: pendiente
+Publicación como PR draft: completa; PR #7
 Merge: no autorizado
 Cierre operativo: no declarado
 ```
@@ -27,6 +27,11 @@ La implementación se preparó en
 `agent/increment-5-integral-corrections`. Malāk y el Vault permanecieron
 sin modificaciones.
 
+La ejecución CI #14 verificó el HEAD publicado `70f82fab` con `256 passed`
+en Windows Server 2025 y Ubuntu. Toda corrección posterior debe volver a
+superar la misma matriz sobre su propio HEAD antes del merge; el estado de
+ese gate se consulta en GitHub y no se congela como vigente en este informe.
+
 ## Brechas reconciliadas
 
 1. El bootstrap de `controlled-proposal` establece el primer
@@ -34,14 +39,16 @@ sin modificaciones.
 2. Cada proyección se valida nuevamente después de generar el contenido
    final y antes del primer commit.
 3. El frontmatter YAML de Markdown rechaza delimitadores incompletos,
-   sintaxis inválida, claves duplicadas y raíces que no sean mappings.
+   ausencia del delimitador inicial, sintaxis inválida, claves duplicadas
+   y raíces que no sean mappings.
 4. Los wikilinks de Obsidian se resuelven contra el Vault, incluyendo
    nombres con puntos y extensión `.md` omitida.
 5. La denylist protege la ruta real e inmutable
    `09-repository-snapshots/**`.
 6. Una PR creada antes de un fallo de persistencia se recupera solo si su
    identidad remota es única y coincide con todos los invariantes
-   gobernados; después el agente se detiene para exigir reconciliación.
+   gobernados; el rango original se conserva aunque Malāk avance después
+   del fallo, y el agente se detiene para exigir reconciliación.
 7. Los informes registran `triggered_by: manual-on-demand`.
 8. La versión pública, el metadata del paquete y los informes quedan
    alineados en `0.3.0`.
@@ -51,14 +58,16 @@ sin modificaciones.
 10. CI ejecuta la suite en `ubuntu-latest` y `windows-latest`.
 11. La documentación distingue el cierre histórico del Incremento 4 de la
     certificación pendiente del baseline actual.
+12. El informe auditable y `AUDIT_INDEX.md` también se validan después de
+    escribir su contenido final y antes del segundo commit.
 
 ## Validación ejecutada
 
 ```text
-python -m pytest -q: 256 passed
+python -m pytest -q: 259 passed en el checkout Linux corregido
 python -m compileall -q src tests: aprobado
 git diff --check: aprobado
-working tree después de los tres commits técnicos: limpio
+validación de ocho documentos reales del Vault: aprobada
 ```
 
 Además, los ocho documentos allowlisted del Vault real fueron evaluados
@@ -79,10 +88,10 @@ alterar el baseline derivado vigente.
 
 ## Validación pendiente en Windows
 
-La configuración de CI permitirá ejecutar la suite y `compileall` de forma
-nativa en Windows después de publicar la PR draft. También debe ejecutarse
-una prueba aislada con GitHub CLI autenticado para verificar el camino de
-recuperación remota sin leer ni modificar el estado operativo real.
+La matriz CI ejecuta la suite y `compileall` de forma nativa en Windows y
+Linux sobre cada HEAD publicado. También debe ejecutarse una prueba aislada
+con GitHub CLI autenticado para verificar el camino de recuperación remota
+sin leer ni modificar el estado operativo real.
 
 Esa prueba deberá usar:
 
@@ -93,8 +102,8 @@ Esa prueba deberá usar:
 - ausencia de merge y de escritura directa en el Vault;
 - eliminación completa de los artefactos temporales al finalizar.
 
-Hasta registrar esa evidencia y revisar CI, el incremento no está cerrado
-operativamente.
+Hasta registrar esa evidencia y comprobar el gate CI sobre el HEAD final,
+el incremento no está cerrado operativamente.
 
 ## Invariantes preservadas
 
@@ -118,6 +127,6 @@ operativamente.
 ## Conclusión provisional
 
 La implementación y la validación local del Incremento Correctivo Integral 5
-están completas. La publicación debe realizarse como PR draft. El merge y el
-cierre operativo requieren una aprobación humana posterior, CI verde en ambos
+están completas en la PR draft #7. El merge y el cierre operativo requieren
+una aprobación humana posterior, CI verde sobre el HEAD final en ambos
 sistemas y validación nativa aislada en Windows.

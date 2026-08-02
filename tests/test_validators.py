@@ -142,6 +142,21 @@ def test_validate_markdown_frontmatter_rejects_missing_delimiter(
     assert findings[0].code == "MARKDOWN_FRONTMATTER_UNCLOSED"
 
 
+def test_validate_markdown_frontmatter_rejects_missing_opening_delimiter(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "document.md"
+    path.write_text(
+        "title: Test\n---\n\n# Test\n",
+        encoding="utf-8",
+    )
+
+    findings = validate_markdown_frontmatter(path)
+
+    assert has_errors(findings)
+    assert findings[0].code == "MARKDOWN_FRONTMATTER_MISSING"
+
+
 def test_validate_yaml_accepts_valid_document(
     tmp_path: Path,
 ) -> None:

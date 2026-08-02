@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, replace
 
@@ -36,6 +37,7 @@ class RecoverableProposal:
     url: str
     head_commit: str
     branch: str
+    source_commit: str
     state: str
     is_draft: bool
     merged_at: str | None
@@ -44,25 +46,21 @@ class RecoverableProposal:
 def discover_remote_proposal(
     config: AgentConfig,
     *,
-    source_commit: str,
+    current_source_commit: str,
+    reconciled_commit: str,
 ) -> RecoverableProposal | None:
     """Recover one agent-owned PR identity after local persistence failed."""
 
     _require_controlled_proposal_mode(config)
     assert config.proposal is not None
 
-    normalized_source = source_commit.strip().lower()
-    if (
-        len(normalized_source) != 40
-        or any(character not in "0123456789abcdef" for character in normalized_source)
-    ):
-        raise ProposalReconciliationError(
-            "Remote proposal recovery requires a full source commit SHA."
-        )
-
-    branch = (
-        f"{config.proposal.branch_prefix}-"
-        f"{normalized_source[:8]}"
+    normalized_current = _normalize_commit(
+        current_source_commit,
+        label="current source",
+    )
+    normalized_reconciled = _normalize_commit(
+        reconciled_commit,
+        label="reconciled",
     )
     command = [
         config.proposal.github_cli,
@@ -70,13 +68,13 @@ def discover_remote_proposal(
         "list",
         "--repo",
         config.vault.repository,
-        "--head",
-        branch,
         "--state",
         "all",
+        "--limit",
+        "100",
         "--json",
         (
-            "url,headRefOid,headRefName,baseRefName,state,"
+            "url,headRefOid,headRefName,baseRefName,baseRefOid,state,"
             "isDraft,mergedAt,body"
         ),
     ]
@@ -124,18 +122,56 @@ def discover_remote_proposal(
         raise ProposalReconciliationError(
             "GitHub CLI returned invalid proposal recovery metadata."
         )
-    if not payload:
+    if any(not isinstance(item, dict) for item in payload):
+        raise ProposalReconciliationError(
+            "GitHub CLI returned invalid proposal recovery metadata."
+        )
+
+    prefix = f"{config.proposal.branch_prefix}-"
+    open_matching: list[dict[str, object]] = []
+    historical_matching: list[dict[str, object]] = []
+
+    for item in payload:
+        head_branch = item.get("headRefName")
+        body = item.get("body")
+        state = item.get("state")
+        is_draft = item.get("isDraft")
+
+        if (
+            not isinstance(head_branch, str)
+            or not head_branch.startswith(prefix)
+            or not isinstance(body, str)
+            or not isinstance(state, str)
+            or not isinstance(is_draft, bool)
+        ):
+            continue
+
+        body_source = _body_commit(body, "Malāk HEAD")
+        body_base = _body_commit(body, "Malāk base")
+        is_open_draft = state.upper() == "OPEN" and is_draft
+        is_current_source = body_source == normalized_current
+        has_reconciled_base = body_base == normalized_reconciled
+
+        if is_open_draft and (is_current_source or has_reconciled_base):
+            open_matching.append(item)
+        elif has_reconciled_base:
+            historical_matching.append(item)
+
+    matching = open_matching or historical_matching
+
+    if not matching:
         return None
-    if len(payload) != 1 or not isinstance(payload[0], dict):
+    if len(matching) != 1:
         raise ProposalReconciliationError(
             "Remote proposal identity is ambiguous."
         )
 
-    item = payload[0]
+    item = matching[0]
     url = item.get("url")
     head_commit = item.get("headRefOid")
     head_branch = item.get("headRefName")
     base_branch = item.get("baseRefName")
+    base_commit = item.get("baseRefOid")
     state = item.get("state")
     is_draft = item.get("isDraft")
     merged_at = item.get("mergedAt")
@@ -146,6 +182,7 @@ def discover_remote_proposal(
         or not isinstance(head_commit, str)
         or not isinstance(head_branch, str)
         or not isinstance(base_branch, str)
+        or not isinstance(base_commit, str)
         or not isinstance(state, str)
         or not isinstance(is_draft, bool)
         or (merged_at is not None and not isinstance(merged_at, str))
@@ -161,9 +198,20 @@ def discover_remote_proposal(
         "malak-project-vault/pull/"
     )
     normalized_head = head_commit.lower()
+    normalized_vault_base = base_commit.lower()
+    body_source = _body_commit(body, "Malāk HEAD")
+    body_reconciled = _body_commit(body, "Malāk base")
+    body_vault_base = _body_commit(body, "Vault base")
+    expected_branch = (
+        f"{config.proposal.branch_prefix}-"
+        f"{body_source[:8]}"
+        if body_source is not None
+        else ""
+    )
 
     if (
-        head_branch != branch
+        body_source is None
+        or head_branch != expected_branch
         or base_branch != config.vault.branch
         or not url.startswith(expected_url_prefix)
         or len(normalized_head) != 40
@@ -171,7 +219,16 @@ def discover_remote_proposal(
             character not in "0123456789abcdef"
             for character in normalized_head
         )
-        or normalized_source not in body
+        or len(normalized_vault_base) != 40
+        or any(
+            character not in "0123456789abcdef"
+            for character in normalized_vault_base
+        )
+        or body_vault_base != normalized_vault_base
+        or (
+            body_source != normalized_current
+            and body_reconciled != normalized_reconciled
+        )
         or normalized_state not in {"OPEN", "CLOSED", "MERGED"}
         or (normalized_state == "OPEN" and not is_draft)
         or (normalized_state == "MERGED" and merged_at is None)
@@ -185,10 +242,32 @@ def discover_remote_proposal(
         url=url,
         head_commit=normalized_head,
         branch=head_branch,
+        source_commit=body_source,
         state=normalized_state,
         is_draft=is_draft,
         merged_at=merged_at,
     )
+
+
+def _normalize_commit(value: str, *, label: str) -> str:
+    normalized = value.strip().lower()
+    if (
+        len(normalized) != 40
+        or any(character not in "0123456789abcdef" for character in normalized)
+    ):
+        raise ProposalReconciliationError(
+            f"Remote proposal recovery requires a full {label} commit SHA."
+        )
+    return normalized
+
+
+def _body_commit(body: str, label: str) -> str | None:
+    match = re.search(
+        rf"^- {re.escape(label)}: `([0-9A-Fa-f]{{40}})`$",
+        body,
+        re.MULTILINE,
+    )
+    return match.group(1).lower() if match is not None else None
 
 
 def reconcile_migrated_proposal(

@@ -230,7 +230,8 @@ def _run_once_unlocked(
             try:
                 recovered = discover_remote_proposal(
                     config,
-                    source_commit=source_snapshot.remote_head,
+                    current_source_commit=source_snapshot.remote_head,
+                    reconciled_commit=state.last_reconciled_commit,
                 )
             except ProposalReconciliationError as exc:
                 raise RunnerError(str(exc)) from exc
@@ -238,7 +239,7 @@ def _run_once_unlocked(
             if recovered is not None:
                 recovered_state = state.with_pending_proposal(
                     base_commit=state.last_reconciled_commit,
-                    proposed_commit=source_snapshot.remote_head,
+                    proposed_commit=recovered.source_commit,
                     vault_commit=recovered.head_commit,
                     pull_request_url=recovered.url,
                 )

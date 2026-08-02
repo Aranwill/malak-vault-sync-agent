@@ -199,7 +199,7 @@ def validate_markdown(
 def validate_markdown_frontmatter(
     path: str | Path,
 ) -> tuple[ValidationFinding, ...]:
-    """Validate YAML frontmatter when a Markdown document declares it."""
+    """Require and validate YAML frontmatter in governed Markdown."""
 
     file_path = Path(path)
     findings: list[ValidationFinding] = []
@@ -210,7 +210,14 @@ def validate_markdown_frontmatter(
 
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        return ()
+        return (
+            ValidationFinding(
+                severity="error",
+                code="MARKDOWN_FRONTMATTER_MISSING",
+                message="Governed Markdown requires YAML frontmatter.",
+                path=str(file_path),
+            ),
+        )
 
     closing_index = next(
         (

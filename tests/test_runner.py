@@ -865,6 +865,7 @@ def test_controlled_run_recovers_remote_proposal_identity(
     recovered = SimpleNamespace(
         url=PENDING_PR_URL,
         head_commit=PENDING_VAULT_COMMIT,
+        source_commit=REMOTE_SOURCE_HEAD,
     )
     monkeypatch.setattr(
         runner_module,
@@ -894,7 +895,7 @@ def test_controlled_run_recovers_remote_proposal_identity(
     assert len(saved_states) == 1
     assert saved_states[0].last_reconciled_commit == BASE_COMMIT
     assert saved_states[0].pending_proposal_base_commit == BASE_COMMIT
-    assert saved_states[0].pending_proposal_commit == SOURCE_HEAD
+    assert saved_states[0].pending_proposal_commit == REMOTE_SOURCE_HEAD
     assert (
         saved_states[0].pending_proposal_vault_commit
         == PENDING_VAULT_COMMIT

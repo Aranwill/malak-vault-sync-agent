@@ -180,6 +180,10 @@ def prepare_vault_proposal(
                 report_path=report_path,
                 run_id=evidence.execution.run_id,
             )
+            _validate_written_projections(
+                worktree,
+                (report_path, index_path),
+            )
             _git(worktree, "diff", "--check", timeout_seconds=timeout_seconds)
             _git(
                 worktree,
@@ -956,6 +960,7 @@ def _open_draft_pr(
             "## Evidencia",
             "",
             f"- Run ID: `{evidence.execution.run_id}`",
+            f"- Malāk base: `{evidence.commit_range.base_commit}`",
             f"- Malāk HEAD: `{evidence.commit_range.head_commit}`",
             f"- Vault base: `{evidence.vault_snapshot.remote_head}`",
             f"- Commit de contenido: `{content_commit}`",

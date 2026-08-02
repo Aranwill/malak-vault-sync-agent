@@ -287,7 +287,10 @@ def test_prepare_proposal_commits_content_before_audit(
     )
     audit_index = vault / "07-audits" / "AUDIT_INDEX.md"
     audit_index.parent.mkdir(parents=True)
-    audit_index.write_text("# Auditorías\n", encoding="utf-8")
+    audit_index.write_text(
+        "---\ntitle: Auditorías\n---\n\n# Auditorías\n",
+        encoding="utf-8",
+    )
     _run("git", "add", ".", cwd=vault)
     _run("git", "commit", "-m", "baseline", cwd=vault)
     _run("git", "remote", "add", "origin", str(remote), cwd=vault)
@@ -351,6 +354,21 @@ def test_prepare_proposal_commits_content_before_audit(
         "_open_draft_pr",
         lambda *args, **kwargs: "https://github.com/example/pr/1",
     )
+    validation_calls: list[tuple[str, ...]] = []
+    original_validator = writer_module._validate_written_projections
+
+    def record_validation(
+        worktree: Path,
+        modified_paths: tuple[str, ...],
+    ) -> None:
+        validation_calls.append(modified_paths)
+        original_validator(worktree, modified_paths)
+
+    monkeypatch.setattr(
+        writer_module,
+        "_validate_written_projections",
+        record_validation,
+    )
 
     proposal = prepare_vault_proposal(
         vault_root=vault,
@@ -385,6 +403,13 @@ def test_prepare_proposal_commits_content_before_audit(
     )
     assert proposal.content_commit in report_content
     assert proposal.pull_request_url.endswith("/1")
+    assert validation_calls == [
+        (candidate.path,),
+        (
+            proposal.report_path,
+            "07-audits/AUDIT_INDEX.md",
+        ),
+    ]
     assert _run(
         "git",
         "branch",
@@ -411,7 +436,10 @@ def test_prepare_proposal_rolls_back_branch_when_pr_creation_fails(
     )
     audit_index = vault / "07-audits" / "AUDIT_INDEX.md"
     audit_index.parent.mkdir(parents=True)
-    audit_index.write_text("# Auditorías\n", encoding="utf-8")
+    audit_index.write_text(
+        "---\ntitle: Auditorías\n---\n\n# Auditorías\n",
+        encoding="utf-8",
+    )
     _run("git", "add", ".", cwd=vault)
     _run("git", "commit", "-m", "baseline", cwd=vault)
     _run("git", "remote", "add", "origin", str(remote), cwd=vault)
