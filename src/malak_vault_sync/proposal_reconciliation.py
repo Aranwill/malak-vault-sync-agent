@@ -31,6 +31,166 @@ class PullRequestSnapshot:
     merged_at: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class RecoverableProposal:
+    url: str
+    head_commit: str
+    branch: str
+    state: str
+    is_draft: bool
+    merged_at: str | None
+
+
+def discover_remote_proposal(
+    config: AgentConfig,
+    *,
+    source_commit: str,
+) -> RecoverableProposal | None:
+    """Recover one agent-owned PR identity after local persistence failed."""
+
+    _require_controlled_proposal_mode(config)
+    assert config.proposal is not None
+
+    normalized_source = source_commit.strip().lower()
+    if (
+        len(normalized_source) != 40
+        or any(character not in "0123456789abcdef" for character in normalized_source)
+    ):
+        raise ProposalReconciliationError(
+            "Remote proposal recovery requires a full source commit SHA."
+        )
+
+    branch = (
+        f"{config.proposal.branch_prefix}-"
+        f"{normalized_source[:8]}"
+    )
+    command = [
+        config.proposal.github_cli,
+        "pr",
+        "list",
+        "--repo",
+        config.vault.repository,
+        "--head",
+        branch,
+        "--state",
+        "all",
+        "--json",
+        (
+            "url,headRefOid,headRefName,baseRefName,state,"
+            "isDraft,mergedAt,body"
+        ),
+    ]
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=config.vault.local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=config.limits.command_timeout_seconds,
+            check=False,
+            shell=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise ProposalReconciliationError(
+            f"Command could not be executed: {config.proposal.github_cli}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ProposalReconciliationError(
+            f"Command timed out: {config.proposal.github_cli}"
+        ) from exc
+
+    if completed.returncode != 0:
+        detail = (
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or "unknown command error"
+        )
+        raise ProposalReconciliationError(
+            "GitHub proposal recovery failed: "
+            f"{sanitize_text(detail)}"
+        )
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ProposalReconciliationError(
+            "GitHub CLI returned invalid proposal recovery metadata."
+        ) from exc
+
+    if not isinstance(payload, list):
+        raise ProposalReconciliationError(
+            "GitHub CLI returned invalid proposal recovery metadata."
+        )
+    if not payload:
+        return None
+    if len(payload) != 1 or not isinstance(payload[0], dict):
+        raise ProposalReconciliationError(
+            "Remote proposal identity is ambiguous."
+        )
+
+    item = payload[0]
+    url = item.get("url")
+    head_commit = item.get("headRefOid")
+    head_branch = item.get("headRefName")
+    base_branch = item.get("baseRefName")
+    state = item.get("state")
+    is_draft = item.get("isDraft")
+    merged_at = item.get("mergedAt")
+    body = item.get("body")
+
+    if (
+        not isinstance(url, str)
+        or not isinstance(head_commit, str)
+        or not isinstance(head_branch, str)
+        or not isinstance(base_branch, str)
+        or not isinstance(state, str)
+        or not isinstance(is_draft, bool)
+        or (merged_at is not None and not isinstance(merged_at, str))
+        or not isinstance(body, str)
+    ):
+        raise ProposalReconciliationError(
+            "GitHub CLI returned incomplete proposal recovery metadata."
+        )
+
+    normalized_state = state.upper()
+    expected_url_prefix = (
+        "https://github.com/Aranwill/"
+        "malak-project-vault/pull/"
+    )
+    normalized_head = head_commit.lower()
+
+    if (
+        head_branch != branch
+        or base_branch != config.vault.branch
+        or not url.startswith(expected_url_prefix)
+        or len(normalized_head) != 40
+        or any(
+            character not in "0123456789abcdef"
+            for character in normalized_head
+        )
+        or normalized_source not in body
+        or normalized_state not in {"OPEN", "CLOSED", "MERGED"}
+        or (normalized_state == "OPEN" and not is_draft)
+        or (normalized_state == "MERGED" and merged_at is None)
+        or (normalized_state == "CLOSED" and merged_at is not None)
+    ):
+        raise ProposalReconciliationError(
+            "Remote proposal does not match the governed identity."
+        )
+
+    return RecoverableProposal(
+        url=url,
+        head_commit=normalized_head,
+        branch=head_branch,
+        state=normalized_state,
+        is_draft=is_draft,
+        merged_at=merged_at,
+    )
+
+
 def reconcile_migrated_proposal(
     config: AgentConfig,
     *,

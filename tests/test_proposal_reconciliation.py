@@ -147,6 +147,134 @@ def _snapshot(
     )
 
 
+def _recovery_payload(
+    *,
+    source_commit: str = SOURCE_COMMIT,
+    is_draft: bool = True,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "url": PULL_REQUEST_URL,
+            "headRefOid": PROPOSAL_VAULT_COMMIT,
+            "headRefName": f"agent/vault-sync-{source_commit[:8]}",
+            "baseRefName": "main",
+            "state": "OPEN",
+            "isDraft": is_draft,
+            "mergedAt": None,
+            "body": f"- Malāk HEAD: `{source_commit}`",
+        }
+    ]
+
+
+def test_discovers_unambiguous_remote_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        calls.append(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(_recovery_payload()),
+            stderr="",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    recovered = module.discover_remote_proposal(
+        config,
+        source_commit=SOURCE_COMMIT,
+    )
+
+    assert recovered is not None
+    assert recovered.url == PULL_REQUEST_URL
+    assert recovered.head_commit == PROPOSAL_VAULT_COMMIT
+    assert recovered.branch == "agent/vault-sync-bbbbbbbb"
+    assert recovered.state == "OPEN"
+    assert recovered.is_draft is True
+    assert "--state" in calls[0]
+    assert "all" in calls[0]
+
+
+def test_remote_proposal_discovery_returns_none_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="[]",
+            stderr="",
+        ),
+    )
+
+    assert module.discover_remote_proposal(
+        config,
+        source_commit=SOURCE_COMMIT,
+    ) is None
+
+
+def test_remote_proposal_discovery_rejects_non_draft_open_pr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(_recovery_payload(is_draft=False)),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(
+        module.ProposalReconciliationError,
+        match="governed identity",
+    ):
+        module.discover_remote_proposal(
+            config,
+            source_commit=SOURCE_COMMIT,
+        )
+
+
+def test_remote_proposal_discovery_rejects_ambiguous_history(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    ambiguous = _recovery_payload() + _recovery_payload()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(ambiguous),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(
+        module.ProposalReconciliationError,
+        match="ambiguous",
+    ):
+        module.discover_remote_proposal(
+            config,
+            source_commit=SOURCE_COMMIT,
+        )
+
+
 def test_accepts_migrated_v2_proposal_and_preserves_backup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
