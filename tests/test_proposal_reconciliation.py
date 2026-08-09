@@ -344,6 +344,38 @@ def test_discovers_proposal_after_source_advances(
     assert recovered.source_commit == SOURCE_COMMIT
     assert recovered.branch == "agent/vault-sync-bbbbbbbb"
 
+def test_discovers_remote_proposal_with_crlf_body(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+
+    payload = _recovery_payload()
+    payload[0]["body"] = payload[0]["body"].replace("\n", "\r\n")
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(payload),
+            stderr="",
+        ),
+    )
+
+    recovered = module.discover_remote_proposal(
+        config,
+        current_source_commit=SOURCE_COMMIT,
+        reconciled_commit=BASE_COMMIT,
+    )
+
+    assert recovered is not None
+    assert recovered.source_commit == SOURCE_COMMIT
+    assert recovered.branch == "agent/vault-sync-bbbbbbbb"
+    assert recovered.state == "OPEN"
+    assert recovered.is_draft is True
+
 
 def test_accepts_migrated_v2_proposal_and_preserves_backup(
     monkeypatch: pytest.MonkeyPatch,
