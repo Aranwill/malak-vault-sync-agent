@@ -344,6 +344,39 @@ def test_discovers_proposal_after_source_advances(
     assert recovered.source_commit == SOURCE_COMMIT
     assert recovered.branch == "agent/vault-sync-bbbbbbbb"
 
+def test_remote_proposal_discovery_ignores_closed_noop_historical_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+
+    payload = _recovery_payload(
+        source_commit=BASE_COMMIT,
+        is_draft=False,
+        state="CLOSED",
+        merged_at=None,
+    )
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(payload),
+            stderr="",
+        ),
+    )
+
+    recovered = module.discover_remote_proposal(
+        config,
+        current_source_commit=SOURCE_COMMIT,
+        reconciled_commit=BASE_COMMIT,
+    )
+
+    assert recovered is None
+
+
 def test_discovers_remote_proposal_with_crlf_body(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
