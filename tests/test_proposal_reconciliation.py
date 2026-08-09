@@ -138,10 +138,14 @@ def _snapshot(
     merged_at: str | None,
     url: str = PULL_REQUEST_URL,
     head_commit: str = PROPOSAL_VAULT_COMMIT,
+    head_branch: str = "agent/vault-sync-bbbbbbbb",
+    base_branch: str = "main",
 ):
     return module.PullRequestSnapshot(
         url=url,
         head_commit=head_commit,
+        head_branch=head_branch,
+        base_branch=base_branch,
         state=state,
         merged_at=merged_at,
     )
@@ -850,21 +854,32 @@ def test_reject_refuses_open_or_merged_pull_request(
 
 
 @pytest.mark.parametrize(
-    ("url", "head_commit"),
+    ("url", "head_branch", "base_branch"),
     [
         (
             "https://github.com/Aranwill/"
             "malak-project-vault/pull/99",
-            PROPOSAL_VAULT_COMMIT,
+            "agent/vault-sync-bbbbbbbb",
+            "main",
         ),
-        (PULL_REQUEST_URL, OTHER_COMMIT),
+        (
+            PULL_REQUEST_URL,
+            "agent/vault-sync-eeeeeeee",
+            "main",
+        ),
+        (
+            PULL_REQUEST_URL,
+            "agent/vault-sync-bbbbbbbb",
+            "other",
+        ),
     ],
 )
 def test_resolution_refuses_mismatched_pull_request_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     url: str,
-    head_commit: str,
+    head_branch: str,
+    base_branch: str,
 ) -> None:
     module = _reconciliation_module()
     config = _make_config(tmp_path)
@@ -878,8 +893,84 @@ def test_resolution_refuses_mismatched_pull_request_identity(
             state="MERGED",
             merged_at="2026-07-31T18:00:00Z",
             url=url,
-            head_commit=head_commit,
+            head_branch=head_branch,
+            base_branch=base_branch,
         ),
+    )
+
+    with pytest.raises(
+        module.ProposalReconciliationError,
+        match="identity",
+    ):
+        module.accept_proposal(
+            config,
+            expected_commit=SOURCE_COMMIT,
+        )
+
+    assert load_state(config.state.path) == pending_state
+
+
+def test_accept_allows_human_reconciled_merged_pull_request_when_original_commit_is_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    save_state(config.state.path, _make_pending_state())
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: _snapshot(
+            module,
+            state="MERGED",
+            merged_at="2026-08-09T23:00:00Z",
+            head_commit=OTHER_COMMIT,
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_commit_is_ancestor",
+        lambda config, *, ancestor, descendant: (
+            ancestor == PROPOSAL_VAULT_COMMIT
+            and descendant == OTHER_COMMIT
+        ),
+    )
+
+    module.accept_proposal(
+        config,
+        expected_commit=SOURCE_COMMIT,
+    )
+
+    state = load_state(config.state.path)
+    assert state.last_reconciled_commit == SOURCE_COMMIT
+    assert state.pending_proposal_base_commit is None
+    assert state.pending_proposal_commit is None
+    assert state.pending_proposal_vault_commit is None
+    assert state.pending_proposal_pull_request_url is None
+
+
+def test_accept_refuses_human_reconciled_merged_pull_request_when_original_commit_is_not_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    pending_state = _make_pending_state()
+    save_state(config.state.path, pending_state)
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: _snapshot(
+            module,
+            state="MERGED",
+            merged_at="2026-08-09T23:00:00Z",
+            head_commit=OTHER_COMMIT,
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_commit_is_ancestor",
+        lambda config, *, ancestor, descendant: False,
     )
 
     with pytest.raises(
@@ -961,6 +1052,8 @@ def test_inspect_pull_request_builds_expected_command(
             stdout=(
                 '{"url":"' + PULL_REQUEST_URL + '",'
                 '"headRefOid":"' + PROPOSAL_VAULT_COMMIT.upper() + '",'
+                '"headRefName":"agent/vault-sync-bbbbbbbb",'
+                '"baseRefName":"main",'
                 '"state":"merged",'
                 '"mergedAt":"2026-07-31T18:00:00Z"}'
             ),
@@ -980,6 +1073,8 @@ def test_inspect_pull_request_builds_expected_command(
     assert snapshot == module.PullRequestSnapshot(
         url=PULL_REQUEST_URL,
         head_commit=PROPOSAL_VAULT_COMMIT,
+        head_branch="agent/vault-sync-bbbbbbbb",
+        base_branch="main",
         state="MERGED",
         merged_at="2026-07-31T18:00:00Z",
     )
@@ -993,7 +1088,7 @@ def test_inspect_pull_request_builds_expected_command(
                 "--repo",
                 "Aranwill/malak-project-vault",
                 "--json",
-                "url,headRefOid,state,mergedAt",
+                "url,headRefOid,headRefName,baseRefName,state,mergedAt",
             ],
             {
                 "cwd": tmp_path,
@@ -1102,3 +1197,45 @@ def test_inspect_pull_request_rejects_invalid_metadata(
             cwd=tmp_path,
             timeout_seconds=17,
         )
+def test_reject_refuses_closed_pull_request_with_changed_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _reconciliation_module()
+    config = _make_config(tmp_path)
+    pending_state = _make_pending_state()
+    reconciled_state = replace(
+        pending_state,
+        last_reconciled_commit=BASE_COMMIT,
+    )
+    save_state(config.state.path, reconciled_state)
+
+    monkeypatch.setattr(
+        module,
+        "inspect_pull_request",
+        lambda **kwargs: _snapshot(
+            module,
+            state="CLOSED",
+            merged_at=None,
+            head_commit=OTHER_COMMIT,
+        ),
+    )
+
+    monkeypatch.setattr(
+        module,
+        "_commit_is_ancestor",
+        lambda *args, **kwargs: pytest.fail(
+            "Closed unmerged proposals must not use ancestry fallback."
+        ),
+    )
+
+    with pytest.raises(
+        module.ProposalReconciliationError,
+        match="identity",
+    ):
+        module.reject_proposal(
+            config,
+            expected_commit=SOURCE_COMMIT,
+        )
+
+    assert load_state(config.state.path) == reconciled_state

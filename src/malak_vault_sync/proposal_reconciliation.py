@@ -28,6 +28,8 @@ class ProposalReconciliationError(RuntimeError):
 class PullRequestSnapshot:
     url: str
     head_commit: str
+    head_branch: str
+    base_branch: str
     state: str
     merged_at: str | None
 
@@ -435,7 +437,7 @@ def inspect_pull_request(
         "--repo",
         repository,
         "--json",
-        "url,headRefOid,state,mergedAt",
+        "url,headRefOid,headRefName,baseRefName,state,mergedAt",
     ]
 
     try:
@@ -484,12 +486,16 @@ def inspect_pull_request(
 
     snapshot_url = payload.get("url")
     head_commit = payload.get("headRefOid")
+    head_branch = payload.get("headRefName")
+    base_branch = payload.get("baseRefName")
     state = payload.get("state")
     merged_at = payload.get("mergedAt")
 
     if (
         not isinstance(snapshot_url, str)
         or not isinstance(head_commit, str)
+        or not isinstance(head_branch, str)
+        or not isinstance(base_branch, str)
         or not isinstance(state, str)
         or (merged_at is not None and not isinstance(merged_at, str))
     ):
@@ -500,6 +506,8 @@ def inspect_pull_request(
     return PullRequestSnapshot(
         url=snapshot_url,
         head_commit=head_commit.lower(),
+        head_branch=head_branch,
+        base_branch=base_branch,
         state=state.upper(),
         merged_at=merged_at,
     )
@@ -547,6 +555,57 @@ def _require_controlled_proposal_mode(config: AgentConfig) -> None:
         )
 
 
+def _commit_is_ancestor(
+    config: AgentConfig,
+    *,
+    ancestor: str,
+    descendant: str,
+) -> bool:
+    command = [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        ancestor,
+        descendant,
+    ]
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=config.vault.local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=config.limits.command_timeout_seconds,
+            check=False,
+            shell=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise ProposalReconciliationError(
+            "Git ancestry verification could not be executed."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ProposalReconciliationError(
+            "Git ancestry verification timed out."
+        ) from exc
+
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+
+    detail = (
+        completed.stderr.strip()
+        or completed.stdout.strip()
+        or "unknown command error"
+    )
+    raise ProposalReconciliationError(
+        "Git ancestry verification failed: "
+        f"{sanitize_text(detail)}"
+    )
+
+
 def _inspect_expected_pull_request(
     config: AgentConfig,
     state: SyncState,
@@ -565,8 +624,33 @@ def _inspect_expected_pull_request(
 
     if (
         pull_request.url != state.pending_proposal_pull_request_url
-        or pull_request.head_commit
-        != state.pending_proposal_vault_commit
+        or pull_request.base_branch != config.vault.branch
+    ):
+        raise ProposalReconciliationError(
+            "The pull request identity does not match the pending proposal."
+        )
+
+    expected_branch = (
+        f"{config.proposal.branch_prefix}-"
+        f"{state.pending_proposal_commit[:8]}"
+    )
+    if pull_request.head_branch != expected_branch:
+        raise ProposalReconciliationError(
+            "The pull request identity does not match the pending proposal."
+        )
+
+    if pull_request.head_commit == state.pending_proposal_vault_commit:
+        return pull_request
+
+    if pull_request.state != "MERGED" or pull_request.merged_at is None:
+        raise ProposalReconciliationError(
+            "The pull request identity does not match the pending proposal."
+        )
+
+    if not _commit_is_ancestor(
+        config,
+        ancestor=state.pending_proposal_vault_commit,
+        descendant=pull_request.head_commit,
     ):
         raise ProposalReconciliationError(
             "The pull request identity does not match the pending proposal."
