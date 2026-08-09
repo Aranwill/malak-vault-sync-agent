@@ -146,6 +146,8 @@ def discover_remote_proposal(
         ):
             continue
 
+        body = body.replace("\r\n", "\n").replace("\r", "\n")
+
         body_source = _body_commit(body, "Malāk HEAD")
         body_base = _body_commit(body, "Malāk base")
         is_open_draft = state.upper() == "OPEN" and is_draft
@@ -199,6 +201,8 @@ def discover_remote_proposal(
     )
     normalized_head = head_commit.lower()
     normalized_vault_base = base_commit.lower()
+
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
     body_source = _body_commit(body, "Malāk HEAD")
     body_reconciled = _body_commit(body, "Malāk base")
     body_vault_base = _body_commit(body, "Vault base")
