@@ -351,12 +351,14 @@ proposal:
         lambda *args, **kwargs: SimpleNamespace(
             returncode=0,
             stdout=json.dumps(
-                {
-                    "url": pull_request_url,
-                    "headRefOid": proposal_vault_commit,
-                    "state": "MERGED",
-                    "mergedAt": "2026-07-31T18:00:00Z",
-                }
+            {
+                "url": pull_request_url,
+                "headRefOid": proposal_vault_commit,
+                "headRefName": f"agent/vault-sync-{source_commit[:8]}",
+                "baseRefName": "main",
+                "state": "MERGED",
+                "mergedAt": "2026-07-31T18:00:00Z",
+            }
             ),
             stderr="",
         ),
