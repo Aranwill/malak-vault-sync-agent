@@ -47,6 +47,7 @@ _ALLOWED_VAULT_PATHS = {
     "05-decisions/PENDING_DECISIONS.md",
     "07-audits/AUDIT_INDEX.md",
     "08-session-context/MALAK_SESSION_CONTEXT.md",
+    "10-knowledge-index/CONCEPTUAL_FOUNDATIONS.md",
     "10-knowledge-index/KNOWLEDGE_INDEX.md",
 }
 
@@ -73,7 +74,11 @@ _DEFAULT_RULES = (
             "CHANGELOG.md",
             "ROADMAP.md",
             "PROJECT.md",
-            "docs/project/**",
+            "docs/project/implementation_roadmap.md",
+            "docs/project/project_context.md",
+            "docs/project/repository_standard.md",
+            "docs/project/roadmap.md",
+            "docs/project/sprints/**",
             "documents/projects/jarvis/releases/**",
             "documents/projects/jarvis/sprints/**",
             "documents/projects/jarvis/changelog.md",
@@ -165,6 +170,17 @@ _DEFAULT_RULES = (
         ),
         vault_candidates=(
             "08-session-context/MALAK_SESSION_CONTEXT.md",
+            "10-knowledge-index/KNOWLEDGE_INDEX.md",
+        ),
+        priority="medium",
+    ),
+    CandidateRule(
+        rule_id="conceptual-foundation-change",
+        source_patterns=(
+            "docs/project/concepts/**",
+        ),
+        vault_candidates=(
+            "10-knowledge-index/CONCEPTUAL_FOUNDATIONS.md",
             "10-knowledge-index/KNOWLEDGE_INDEX.md",
         ),
         priority="medium",

@@ -9,6 +9,7 @@ from malak_vault_sync.candidate_resolver import (
     is_allowed_vault_path,
     is_denied_vault_path,
     resolve_candidates,
+    CandidateReason,
 )
 from malak_vault_sync.git_inspector import ChangedFile
 
@@ -358,7 +359,7 @@ def test_invalid_priority_is_rejected() -> None:
 def test_default_rules_are_available() -> None:
     rules = default_rules()
 
-    assert len(rules) == 7
+    assert len(rules) == 8
     assert {
         rule.rule_id
         for rule in rules
@@ -369,5 +370,44 @@ def test_default_rules_are_available() -> None:
         "governance-change",
         "security-change",
         "knowledge-change",
+        "conceptual-foundation-change",
         "operational-tooling-change",
     }
+
+
+def test_conceptual_foundation_change_returns_knowledge_candidates() -> None:
+    candidates = resolve_candidates(
+        (
+            ChangedFile(
+                status="A",
+                path=(
+                    "docs/project/concepts/"
+                    "MALAK_COGNITIVE_DATASET_FOUNDATION.md"
+                ),
+            ),
+        )
+    )
+
+    assert [candidate.path for candidate in candidates] == [
+        "10-knowledge-index/KNOWLEDGE_INDEX.md",
+        "10-knowledge-index/CONCEPTUAL_FOUNDATIONS.md",
+    ]
+
+    assert all(
+        candidate.priority == "medium"
+        for candidate in candidates
+    )
+
+    assert all(
+        candidate.reasons
+        == (
+            CandidateReason(
+                rule_id="conceptual-foundation-change",
+                source_path=(
+                    "docs/project/concepts/"
+                    "MALAK_COGNITIVE_DATASET_FOUNDATION.md"
+                ),
+            ),
+        )
+        for candidate in candidates
+    )
