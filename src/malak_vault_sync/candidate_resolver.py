@@ -65,6 +65,10 @@ _DENIED_VAULT_PATTERNS = (
     "**/*.p12",
 )
 
+_EXPLICITLY_IGNORED_SOURCE_PATTERNS = (
+    "documents/projects/jarvis/archive/**",
+)
+
 _DEFAULT_RULES = (
     CandidateRule(
         rule_id="baseline-source-change",
@@ -323,6 +327,52 @@ def is_allowed_vault_path(path: str) -> bool:
         normalized in _ALLOWED_VAULT_PATHS
         and not is_denied_vault_path(normalized)
     )
+
+def is_explicitly_ignored_source_path(path: str) -> bool:
+    normalized = _normalize_source_path(path)
+
+    return _matches_any(
+        normalized,
+        _EXPLICITLY_IGNORED_SOURCE_PATTERNS,
+    )
+
+
+def find_unmapped_source_paths(
+    changed_files: tuple[ChangedFile, ...],
+    *,
+    rules: tuple[CandidateRule, ...] = _DEFAULT_RULES,
+) -> tuple[str, ...]:
+    _validate_rules(rules)
+
+    source_paths: set[str] = set()
+
+    for changed_file in changed_files:
+        source_paths.add(
+            _normalize_source_path(changed_file.path)
+        )
+
+        if changed_file.previous_path is not None:
+            source_paths.add(
+                _normalize_source_path(
+                    changed_file.previous_path
+                )
+            )
+
+    unmapped = []
+
+    for path in sorted(source_paths):
+        if is_explicitly_ignored_source_path(path):
+            continue
+
+        if any(
+            _matches_any(path, rule.source_patterns)
+            for rule in rules
+        ):
+            continue
+
+        unmapped.append(path)
+
+    return tuple(unmapped)
 
 
 def _validate_rules(
