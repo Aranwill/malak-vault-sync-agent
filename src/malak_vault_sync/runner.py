@@ -11,6 +11,7 @@ from malak_vault_sync.audit import (
 from malak_vault_sync.audit_store import write_audit_report_package
 from malak_vault_sync.candidate_resolver import (
     DocumentCandidate,
+    find_unmapped_source_paths,
     resolve_candidates,
 )
 from malak_vault_sync.evidence import (
@@ -290,12 +291,19 @@ def _run_once_unlocked(
     )
 
     candidates = resolve_candidates(changed_files)
-    findings = _validate_candidates(
+
+    coverage_findings = _validate_source_mapping_coverage(
+        changed_files,
+    )
+
+    candidate_findings = _validate_candidates(
         vault_root=config.vault.local_path,
         candidates=candidates,
         follow_symlinks=config.security.follow_symlinks,
         max_file_bytes=config.limits.max_file_bytes,
     )
+
+    findings = coverage_findings + candidate_findings
 
     evidence_hash_manifest = evidence_directory / "hashes.sha256"
 
@@ -312,6 +320,22 @@ def _run_once_unlocked(
     audit_artifacts = write_audit_report_package(
         config.output.report_dir,
         report,
+    )
+
+    if report.conclusion is AuditConclusion.FAIL:
+        return RunResult(
+        source_snapshot=source_snapshot,
+        vault_snapshot=vault_snapshot,
+        base_commit=base_commit,
+        head_commit=head_commit,
+        changed_files=changed_files,
+        candidates=candidates,
+        findings=findings,
+        evidence_directory=evidence_directory,
+        audit_directory=audit_artifacts.directory,
+        conclusion=report.conclusion,
+        bootstrap=bootstrap,
+        proposal=None,
     )
 
     proposal: VaultProposal | None = None
@@ -405,6 +429,24 @@ def _validate_repository_snapshot(
         raise RunnerError(
             f"{name.capitalize()} local HEAD must match remote HEAD."
         )
+
+def _validate_source_mapping_coverage(
+    changed_files: tuple[ChangedFile, ...],
+) -> tuple[ValidationFinding, ...]:
+    unmapped_paths = find_unmapped_source_paths(changed_files)
+
+    return tuple(
+        ValidationFinding(
+            severity="error",
+            code="SOURCE_PATH_UNMAPPED",
+            message=(
+                "Changed source path is neither mapped nor explicitly "
+                "ignored."
+            ),
+            path=path,
+        )
+        for path in unmapped_paths
+    )
 
 
 def _validate_candidates(
