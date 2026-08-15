@@ -31,10 +31,11 @@ from malak_vault_sync.models import (
     StateConfig,
     VaultConfig,
 )
-from malak_vault_sync.runner import RunnerError, poll_runs,run_once
+from malak_vault_sync.runner import RunnerError, poll_runs, run_once
 from malak_vault_sync.state_store import SyncState
 from malak_vault_sync.execution_lock import ExecutionLockError
 from malak_vault_sync.vault_writer import VaultProposal
+from malak_vault_sync.validators import ValidationFinding
 
 
 SOURCE_HEAD = "a" * 40
@@ -1407,3 +1408,98 @@ def test_poll_runs_rejects_invalid_interval(
             should_stop=lambda: True,
             sleep=lambda seconds: None,
         )
+
+
+def test_source_mapping_coverage_accepts_mapped_path() -> None:
+    findings = runner_module._validate_source_mapping_coverage(
+        (
+            ChangedFile(
+                status="M",
+                path="src/malak/kernel/kernel.py",
+            ),
+        )
+    )
+
+    assert findings == ()
+
+
+def test_source_mapping_coverage_rejects_unknown_path() -> None:
+    findings = runner_module._validate_source_mapping_coverage(
+        (
+            ChangedFile(
+                status="A",
+                path="future/new-area/file.md",
+            ),
+        )
+    )
+
+    assert findings == (
+        ValidationFinding(
+            severity="error",
+            code="SOURCE_PATH_UNMAPPED",
+            message=(
+                "Changed source path is neither mapped nor explicitly "
+                "ignored."
+            ),
+            path="future/new-area/file.md",
+        ),
+    )
+
+
+def test_run_once_unmapped_source_fails_without_advancing_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+
+    state = SyncState.initial().with_successful_observation(
+        observed_commit=BASE_COMMIT,
+        vault_commit=VAULT_HEAD,
+        run_id="previous-run",
+    )
+
+    _install_common_stubs(
+        monkeypatch,
+        tmp_path,
+        state=state,
+    )
+
+    changed_files = (
+        ChangedFile(
+            status="A",
+            path="future/new-area/file.md",
+        ),
+    )
+
+    monkeypatch.setattr(
+        runner_module,
+        "list_changed_files",
+        lambda *args, **kwargs: changed_files,
+    )
+
+    saved_states: list[SyncState] = []
+
+    monkeypatch.setattr(
+        runner_module,
+        "save_state",
+        lambda path, next_state: saved_states.append(next_state),
+    )
+
+    result = run_once(config)
+
+    assert result.conclusion is AuditConclusion.FAIL
+    assert result.proposal is None
+
+    assert result.findings == (
+        runner_module.ValidationFinding(
+            severity="error",
+            code="SOURCE_PATH_UNMAPPED",
+            message=(
+                "Changed source path is neither mapped nor explicitly "
+                "ignored."
+            ),
+            path="future/new-area/file.md",
+        ),
+    )
+
+    assert saved_states == []

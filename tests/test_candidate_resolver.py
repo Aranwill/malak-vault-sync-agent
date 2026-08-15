@@ -9,6 +9,9 @@ from malak_vault_sync.candidate_resolver import (
     is_allowed_vault_path,
     is_denied_vault_path,
     resolve_candidates,
+    CandidateReason,
+    find_unmapped_source_paths,
+    is_explicitly_ignored_source_path,
 )
 from malak_vault_sync.git_inspector import ChangedFile
 
@@ -358,7 +361,7 @@ def test_invalid_priority_is_rejected() -> None:
 def test_default_rules_are_available() -> None:
     rules = default_rules()
 
-    assert len(rules) == 7
+    assert len(rules) == 8
     assert {
         rule.rule_id
         for rule in rules
@@ -369,5 +372,130 @@ def test_default_rules_are_available() -> None:
         "governance-change",
         "security-change",
         "knowledge-change",
+        "conceptual-foundation-change",
         "operational-tooling-change",
     }
+
+
+def test_conceptual_foundation_change_returns_knowledge_candidates() -> None:
+    candidates = resolve_candidates(
+        (
+            ChangedFile(
+                status="A",
+                path=(
+                    "docs/project/concepts/"
+                    "MALAK_COGNITIVE_DATASET_FOUNDATION.md"
+                ),
+            ),
+        )
+    )
+
+    assert [candidate.path for candidate in candidates] == [
+        "10-knowledge-index/KNOWLEDGE_INDEX.md",
+        "10-knowledge-index/CONCEPTUAL_FOUNDATIONS.md",
+    ]
+
+    assert all(
+        candidate.priority == "medium"
+        for candidate in candidates
+    )
+
+    assert all(
+        candidate.reasons
+        == (
+            CandidateReason(
+                rule_id="conceptual-foundation-change",
+                source_path=(
+                    "docs/project/concepts/"
+                    "MALAK_COGNITIVE_DATASET_FOUNDATION.md"
+                ),
+            ),
+        )
+        for candidate in candidates
+    )
+
+
+def test_archive_source_path_is_explicitly_ignored() -> None:
+    assert is_explicitly_ignored_source_path(
+        "documents/projects/jarvis/archive/"
+        "estado_actual_jarvis_v0.4.1.md"
+    ) is True
+
+
+def test_mapped_source_path_is_not_reported_unmapped() -> None:
+    unmapped = find_unmapped_source_paths(
+        (
+            ChangedFile(
+                status="M",
+                path="src/malak/kernel/kernel.py",
+            ),
+        )
+    )
+
+    assert unmapped == ()
+
+
+def test_explicitly_ignored_source_path_is_not_reported_unmapped() -> None:
+    unmapped = find_unmapped_source_paths(
+        (
+            ChangedFile(
+                status="M",
+                path=(
+                    "documents/projects/jarvis/archive/"
+                    "legacy.md"
+                ),
+            ),
+        )
+    )
+
+    assert unmapped == ()
+
+
+def test_unknown_source_path_is_reported_unmapped() -> None:
+    unmapped = find_unmapped_source_paths(
+        (
+            ChangedFile(
+                status="A",
+                path="future/new-area/file.md",
+            ),
+        )
+    )
+
+    assert unmapped == (
+        "future/new-area/file.md",
+    )
+
+
+def test_unmapped_rename_checks_previous_and_current_paths() -> None:
+    unmapped = find_unmapped_source_paths(
+        (
+            ChangedFile(
+                status="R100",
+                previous_path="future/old/file.md",
+                path="src/malak/new/file.py",
+            ),
+        )
+    )
+
+    assert unmapped == (
+        "future/old/file.md",
+    )
+
+
+def test_unmapped_source_paths_are_normalized_and_deduplicated() -> None:
+    unmapped = find_unmapped_source_paths(
+        (
+            ChangedFile(
+                status="M",
+                path=r"future\new-area\file.md",
+            ),
+            ChangedFile(
+                status="M",
+                path="future/new-area/file.md",
+            ),
+        )
+    )
+
+    assert unmapped == (
+        "future/new-area/file.md",
+    )
