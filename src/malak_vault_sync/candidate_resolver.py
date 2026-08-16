@@ -94,9 +94,12 @@ _DEFAULT_RULES = (
             "documents/projects/jarvis/setup.md",
         ),
         vault_candidates=(
+            "01-architecture/CURRENT_COMPONENTS_MAP.md",
             "02-current-baseline/CURRENT_BASELINE.md",
-            "08-session-context/MALAK_SESSION_CONTEXT.md",
             "03-roadmap/IMPLEMENTATION_ROADMAP.md",
+            "05-decisions/PENDING_DECISIONS.md",
+            "08-session-context/MALAK_SESSION_CONTEXT.md",
+            "10-knowledge-index/KNOWLEDGE_INDEX.md",
         ),
         priority="high",
     ),

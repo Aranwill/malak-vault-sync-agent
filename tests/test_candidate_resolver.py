@@ -377,6 +377,34 @@ def test_default_rules_are_available() -> None:
     }
 
 
+
+def test_baseline_source_change_invalidates_all_active_baseline_projections() -> None:
+    candidates = resolve_candidates(
+        (
+            ChangedFile(
+                status="M",
+                path="docs/project/sprints/SPRINT-7.7.md",
+            ),
+        )
+    )
+
+    assert [candidate.path for candidate in candidates] == [
+        "10-knowledge-index/KNOWLEDGE_INDEX.md",
+        "08-session-context/MALAK_SESSION_CONTEXT.md",
+        "05-decisions/PENDING_DECISIONS.md",
+        "03-roadmap/IMPLEMENTATION_ROADMAP.md",
+        "02-current-baseline/CURRENT_BASELINE.md",
+        "01-architecture/CURRENT_COMPONENTS_MAP.md",
+    ]
+
+    assert all(
+        any(
+            reason.rule_id == "baseline-source-change"
+            for reason in candidate.reasons
+        )
+        for candidate in candidates
+    )
+
 def test_conceptual_foundation_change_returns_knowledge_candidates() -> None:
     candidates = resolve_candidates(
         (
