@@ -220,6 +220,80 @@ def test_collect_source_projection_prefers_completed_sprint_with_utf8_bom(
     assert projection.sprint_as_of_commit == "sprint77"
 
 
+def test_projection_consistency_accepts_exact_managed_projection(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    candidate = _candidate()
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+
+    expected_block = writer_module._render_projection(
+        evidence,
+        candidate,
+        source_projection,
+    )
+
+    target = tmp_path / candidate.path
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "# Current Baseline\n\n" + expected_block + "\n",
+        encoding="utf-8",
+    )
+
+    writer_module._validate_projection_consistency(
+        tmp_path,
+        (candidate,),
+        evidence,
+        source_projection,
+    )
+
+
+def test_projection_consistency_rejects_stale_official_head(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    candidate = _candidate()
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+
+    expected_block = writer_module._render_projection(
+        evidence,
+        candidate,
+        source_projection,
+    )
+    stale_block = expected_block.replace(
+        evidence.commit_range.head_commit,
+        "stale-head",
+        1,
+    )
+
+    target = tmp_path / candidate.path
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "# Current Baseline\n\n" + stale_block + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(VaultProposalError, match="consistency"):
+        writer_module._validate_projection_consistency(
+            tmp_path,
+            (candidate,),
+            evidence,
+            source_projection,
+        )
+
+
 def test_active_sprint_precedes_higher_future_draft() -> None:
     active = (
         "docs/project/sprints/SPRINT-7.4.md",

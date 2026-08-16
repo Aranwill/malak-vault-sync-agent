@@ -144,6 +144,12 @@ def prepare_vault_proposal(
                 source_projection,
             )
             _validate_written_projections(worktree, modified_paths)
+            _validate_projection_consistency(
+                worktree,
+                candidates,
+                evidence,
+                source_projection,
+            )
             _git(worktree, "diff", "--check", timeout_seconds=timeout_seconds)
             _git(
                 worktree,
@@ -809,6 +815,39 @@ def _validate_candidates(
         if not is_allowed_vault_path(candidate.path):
             raise VaultProposalError(
                 f"Candidate path is not allowlisted: {candidate.path}"
+            )
+
+
+def _validate_projection_consistency(
+    worktree: Path,
+    candidates: tuple[DocumentCandidate, ...],
+    evidence: EvidenceManifest,
+    source_projection: SourceProjection,
+) -> None:
+    for candidate in candidates:
+        path = worktree / candidate.path
+        content = path.read_text(encoding="utf-8-sig")
+
+        start = content.find(_MANAGED_START)
+        end = content.find(_MANAGED_END)
+
+        if start == -1 or end == -1 or end < start:
+            raise VaultProposalError(
+                "Projection consistency check failed: managed block missing "
+                f"for {candidate.path}."
+            )
+
+        actual_block = content[start : end + len(_MANAGED_END)]
+        expected_block = _render_projection(
+            evidence,
+            candidate,
+            source_projection,
+        )
+
+        if actual_block != expected_block:
+            raise VaultProposalError(
+                "Projection consistency check failed for "
+                f"{candidate.path}."
             )
 
 
