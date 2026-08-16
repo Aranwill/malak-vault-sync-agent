@@ -581,6 +581,7 @@ def _sprint_record_sort_key(
 
 
 def _frontmatter_value(content: str, key: str) -> str | None:
+    content = content.removeprefix("\ufeff")
     if not content.startswith("---\n"):
         return None
     end = content.find("\n---", 4)

@@ -155,6 +155,71 @@ def test_managed_projection_is_replaced_not_duplicated(
     assert evidence.commit_range.head_commit in second
 
 
+def test_frontmatter_value_accepts_utf8_bom() -> None:
+    content = (
+        "\ufeff---\n"
+        "title: Sprint 7.7 - Baseline certification\n"
+        "status: completado\n"
+        "as_of_commit: abc123\n"
+        "---\n"
+    )
+
+    assert writer_module._frontmatter_value(content, "status") == "completado"
+    assert writer_module._frontmatter_value(content, "as_of_commit") == "abc123"
+
+
+def test_collect_source_projection_prefers_completed_sprint_with_utf8_bom(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+
+    sprint_76 = (
+        "---\n"
+        "title: Sprint 7.6 - Secure Context Lifecycle Foundation\n"
+        "status: cerrado\n"
+        "as_of_commit: sprint76\n"
+        "---\n"
+    )
+    sprint_77 = (
+        "\ufeff---\n"
+        "title: Sprint 7.7 - Baseline certification\n"
+        "status: completado\n"
+        "as_of_commit: sprint77\n"
+        "---\n"
+    )
+
+    def fake_git(*args: object, **kwargs: object) -> str:
+        command = args[1]
+        if command == "ls-tree":
+            return (
+                "docs/project/sprints/SPRINT-7.6.md\n"
+                "docs/project/sprints/SPRINT-7.7.md\n"
+            )
+        if command == "show":
+            ref = str(args[2])
+            if ref.endswith("SPRINT-7.6.md"):
+                return sprint_76
+            if ref.endswith("SPRINT-7.7.md"):
+                return sprint_77
+            raise AssertionError(f"Unexpected show ref: {ref}")
+        if command == "log":
+            return ""
+        raise AssertionError(f"Unexpected git command: {command}")
+
+    monkeypatch.setattr(writer_module, "_git", fake_git)
+
+    projection = writer_module._collect_source_projection(
+        evidence,
+        timeout_seconds=1,
+    )
+
+    assert projection.sprint_document == "docs/project/sprints/SPRINT-7.7.md"
+    assert projection.sprint_title == "Sprint 7.7 - Baseline certification"
+    assert projection.sprint_status == "completado"
+    assert projection.sprint_as_of_commit == "sprint77"
+
+
 def test_active_sprint_precedes_higher_future_draft() -> None:
     active = (
         "docs/project/sprints/SPRINT-7.4.md",
