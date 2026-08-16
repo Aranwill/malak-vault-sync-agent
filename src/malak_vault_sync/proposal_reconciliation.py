@@ -159,7 +159,8 @@ def discover_remote_proposal(
         if is_open_draft and (is_current_source or has_reconciled_base):
             open_matching.append(item)
         elif (
-            has_reconciled_base
+            state.upper() != "CLOSED"
+            and has_reconciled_base
             and body_source is not None
             and body_source != body_base
         ):
