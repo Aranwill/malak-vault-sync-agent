@@ -220,6 +220,239 @@ def test_collect_source_projection_prefers_completed_sprint_with_utf8_bom(
     assert projection.sprint_as_of_commit == "sprint77"
 
 
+def test_build_operational_state_uses_verified_source_projection(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+
+    state = writer_module._build_operational_state(
+        evidence,
+        source_projection,
+    )
+
+    assert state.source_head == evidence.commit_range.head_commit
+    assert state.sprint_document == "docs/project/sprints/SPRINT-7.7.md"
+    assert state.sprint_title == "Sprint 7.7 - Baseline certification"
+    assert state.sprint_status == "completado"
+    assert state.sprint_as_of_commit == "sprint77"
+
+
+def test_render_operational_state_uses_machine_owned_markers(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+    state = writer_module._build_operational_state(
+        evidence,
+        source_projection,
+    )
+
+    rendered = writer_module._render_operational_state(state)
+
+    assert rendered.startswith("<!-- MALAK_OPERATIONAL_STATE:START -->")
+    assert rendered.endswith("<!-- MALAK_OPERATIONAL_STATE:END -->")
+    assert evidence.commit_range.head_commit in rendered
+    assert "docs/project/sprints/SPRINT-7.7.md" in rendered
+    assert "Sprint 7.7 - Baseline certification" in rendered
+    assert "completado" in rendered
+    assert "sprint77" in rendered
+
+
+def test_operational_state_block_is_replaced_not_duplicated(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+    state = writer_module._build_operational_state(
+        evidence,
+        source_projection,
+    )
+    block = writer_module._render_operational_state(state)
+
+    original = (
+        "---\n"
+        "title: Baseline\n"
+        "---\n\n"
+        "# Baseline\n\n"
+        "Contenido humano.\n"
+    )
+
+    first = writer_module._upsert_operational_state_block(
+        original,
+        block,
+    )
+    second = writer_module._upsert_operational_state_block(
+        first,
+        block,
+    )
+
+    assert first == second
+    assert second.count("<!-- MALAK_OPERATIONAL_STATE:START -->") == 1
+    assert second.count("<!-- MALAK_OPERATIONAL_STATE:END -->") == 1
+    assert "Contenido humano." in second
+
+
+def test_operational_state_is_inserted_after_sync_block_and_preserves_human_body(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    candidate = _candidate()
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+    state = writer_module._build_operational_state(
+        evidence,
+        source_projection,
+    )
+    sync_block = writer_module._render_projection(
+        evidence,
+        candidate,
+        source_projection,
+    )
+    operational_block = writer_module._render_operational_state(state)
+
+    original = (
+        "---\n"
+        "title: Baseline\n"
+        "---\n\n"
+        "# Baseline\n\n"
+        + sync_block
+        + "\n\n"
+        + "## Contexto humano\n\n"
+        + "Contenido humano e historico.\n"
+    )
+
+    updated = writer_module._upsert_operational_state_block(
+        original,
+        operational_block,
+    )
+
+    sync_end = updated.index("<!-- MALAK_VAULT_SYNC:END -->")
+    operational_start = updated.index(
+        "<!-- MALAK_OPERATIONAL_STATE:START -->"
+    )
+    human_start = updated.index("## Contexto humano")
+
+    assert sync_end < operational_start < human_start
+    assert "Contenido humano e historico." in updated
+    assert updated.count("<!-- MALAK_VAULT_SYNC:START -->") == 1
+    assert updated.count("<!-- MALAK_OPERATIONAL_STATE:START -->") == 1
+
+
+def test_write_candidate_projections_writes_operational_state(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    candidate = _candidate()
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+
+    target = tmp_path / candidate.path
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "---\n"
+        "title: Baseline\n"
+        "---\n\n"
+        "# Baseline\n\n"
+        "Contenido humano.\n",
+        encoding="utf-8",
+    )
+
+    modified = writer_module._write_candidate_projections(
+        tmp_path,
+        evidence,
+        (candidate,),
+        source_projection,
+    )
+
+    content = target.read_text(encoding="utf-8")
+
+    assert modified == (candidate.path,)
+    assert content.count("<!-- MALAK_VAULT_SYNC:START -->") == 1
+    assert content.count("<!-- MALAK_OPERATIONAL_STATE:START -->") == 1
+    assert "Contenido humano." in content
+    assert content.index("<!-- MALAK_VAULT_SYNC:END -->") < content.index(
+        "<!-- MALAK_OPERATIONAL_STATE:START -->"
+    )
+
+
+def test_projection_consistency_rejects_stale_operational_state(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence(tmp_path)
+    candidate = _candidate()
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+
+    sync_block = writer_module._render_projection(
+        evidence,
+        candidate,
+        source_projection,
+    )
+    state = writer_module._build_operational_state(
+        evidence,
+        source_projection,
+    )
+    operational_block = writer_module._render_operational_state(state)
+    stale_operational_block = operational_block.replace(
+        source_projection.sprint_as_of_commit,
+        "stale-sprint",
+        1,
+    )
+
+    target = tmp_path / candidate.path
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "# Current Baseline\n\n"
+        + sync_block
+        + "\n\n"
+        + stale_operational_block
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(VaultProposalError, match="consistency"):
+        writer_module._validate_projection_consistency(
+            tmp_path,
+            (candidate,),
+            evidence,
+            source_projection,
+        )
+
+
 def test_projection_consistency_accepts_exact_managed_projection(
     tmp_path: Path,
 ) -> None:
@@ -238,11 +471,22 @@ def test_projection_consistency_accepts_exact_managed_projection(
         candidate,
         source_projection,
     )
+    operational_state = writer_module._build_operational_state(
+        evidence,
+        source_projection,
+    )
+    expected_operational_block = writer_module._render_operational_state(
+        operational_state
+    )
 
     target = tmp_path / candidate.path
     target.parent.mkdir(parents=True)
     target.write_text(
-        "# Current Baseline\n\n" + expected_block + "\n",
+        "# Current Baseline\n\n"
+        + expected_block
+        + "\n\n"
+        + expected_operational_block
+        + "\n",
         encoding="utf-8",
     )
 

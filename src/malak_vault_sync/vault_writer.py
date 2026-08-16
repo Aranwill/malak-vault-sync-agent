@@ -48,8 +48,19 @@ class SourceProjection:
     commit_summaries: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class OperationalState:
+    source_head: str
+    sprint_document: str | None
+    sprint_title: str | None
+    sprint_status: str | None
+    sprint_as_of_commit: str | None
+
+
 _MANAGED_START = "<!-- MALAK_VAULT_SYNC:START -->"
 _MANAGED_END = "<!-- MALAK_VAULT_SYNC:END -->"
+_OPERATIONAL_STATE_START = "<!-- MALAK_OPERATIONAL_STATE:START -->"
+_OPERATIONAL_STATE_END = "<!-- MALAK_OPERATIONAL_STATE:END -->"
 _BRANCH_PATTERN = re.compile(
     r"^agent/vault-sync-[0-9a-f]{8}$"
 )
@@ -354,6 +365,11 @@ def _write_candidate_projections(
     source_projection: SourceProjection,
 ) -> tuple[str, ...]:
     modified: list[str] = []
+    operational_state = _build_operational_state(
+        evidence,
+        source_projection,
+    )
+    operational_block = _render_operational_state(operational_state)
 
     for candidate in candidates:
         path = worktree / candidate.path
@@ -370,6 +386,10 @@ def _write_candidate_projections(
             source_projection,
         )
         updated = _upsert_managed_block(content, block)
+        updated = _upsert_operational_state_block(
+            updated,
+            operational_block,
+        )
         path.write_text(updated, encoding="utf-8", newline="\n")
         modified.append(candidate.path)
 
@@ -461,6 +481,57 @@ def _render_projection(
             _MANAGED_END,
         ]
     )
+    return "\n".join(lines)
+
+
+def _build_operational_state(
+    evidence: EvidenceManifest,
+    source_projection: SourceProjection,
+) -> OperationalState:
+    return OperationalState(
+        source_head=evidence.commit_range.head_commit,
+        sprint_document=source_projection.sprint_document,
+        sprint_title=source_projection.sprint_title,
+        sprint_status=source_projection.sprint_status,
+        sprint_as_of_commit=source_projection.sprint_as_of_commit,
+    )
+
+
+def _render_operational_state(state: OperationalState) -> str:
+    lines = [
+        _OPERATIONAL_STATE_START,
+        "## Estado operativo derivado",
+        "",
+        "> Estado machine-owned derivado de la fuente oficial.",
+        "> No concede autoridad ni reemplaza decisiones humanas.",
+        "",
+        f"- **HEAD oficial:** `{state.source_head}`",
+        (
+            "- **Ficha de sprint vigente:** "
+            f"`{state.sprint_document}`"
+            if state.sprint_document
+            else "- **Ficha de sprint vigente:** no detectada"
+        ),
+        (
+            "- **Titulo declarado:** "
+            f"{state.sprint_title}"
+            if state.sprint_title
+            else "- **Titulo declarado:** no disponible"
+        ),
+        (
+            "- **Estado declarado:** "
+            f"`{state.sprint_status}`"
+            if state.sprint_status
+            else "- **Estado declarado:** no disponible"
+        ),
+        (
+            "- **`as_of_commit` declarado:** "
+            f"`{state.sprint_as_of_commit}`"
+            if state.sprint_as_of_commit
+            else "- **`as_of_commit` declarado:** no disponible"
+        ),
+        _OPERATIONAL_STATE_END,
+    ]
     return "\n".join(lines)
 
 
@@ -603,6 +674,48 @@ def _frontmatter_value(content: str, key: str) -> str | None:
     return sanitize_text(
         match.group("value").strip().strip("'\"")
     )[:500]
+
+
+def _upsert_operational_state_block(content: str, block: str) -> str:
+    start = content.find(_OPERATIONAL_STATE_START)
+    end = content.find(_OPERATIONAL_STATE_END)
+
+    if (start == -1) != (end == -1):
+        raise VaultProposalError(
+            "Malformed operational state block."
+        )
+
+    if start != -1:
+        end += len(_OPERATIONAL_STATE_END)
+        return content[:start] + block + content[end:]
+
+    managed_end = content.find(_MANAGED_END)
+    if managed_end != -1:
+        insertion = managed_end + len(_MANAGED_END)
+        return (
+            content[:insertion]
+            + "\n\n"
+            + block
+            + content[insertion:]
+        )
+
+    heading = content.find("\n# ")
+    if heading == -1:
+        raise VaultProposalError(
+            "Candidate document has no top-level heading."
+        )
+
+    heading_end = content.find("\n", heading + 1)
+    if heading_end == -1:
+        heading_end = len(content)
+
+    return (
+        content[: heading_end + 1]
+        + "\n"
+        + block
+        + "\n"
+        + content[heading_end + 1 :]
+    )
 
 
 def _upsert_managed_block(content: str, block: str) -> str:
@@ -824,6 +937,14 @@ def _validate_projection_consistency(
     evidence: EvidenceManifest,
     source_projection: SourceProjection,
 ) -> None:
+    operational_state = _build_operational_state(
+        evidence,
+        source_projection,
+    )
+    expected_operational_block = _render_operational_state(
+        operational_state
+    )
+
     for candidate in candidates:
         path = worktree / candidate.path
         content = path.read_text(encoding="utf-8-sig")
@@ -848,6 +969,30 @@ def _validate_projection_consistency(
             raise VaultProposalError(
                 "Projection consistency check failed for "
                 f"{candidate.path}."
+            )
+
+        operational_start = content.find(_OPERATIONAL_STATE_START)
+        operational_end = content.find(_OPERATIONAL_STATE_END)
+
+        if (
+            operational_start == -1
+            or operational_end == -1
+            or operational_end < operational_start
+        ):
+            raise VaultProposalError(
+                "Projection consistency check failed: operational state "
+                f"block missing for {candidate.path}."
+            )
+
+        operational_end += len(_OPERATIONAL_STATE_END)
+        actual_operational_block = content[
+            operational_start:operational_end
+        ]
+
+        if actual_operational_block != expected_operational_block:
+            raise VaultProposalError(
+                "Projection consistency check failed for "
+                f"{candidate.path}: operational state mismatch."
             )
 
 
