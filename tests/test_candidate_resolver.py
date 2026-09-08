@@ -390,6 +390,7 @@ def test_baseline_source_change_invalidates_all_active_baseline_projections() ->
 
     assert [candidate.path for candidate in candidates] == [
         "10-knowledge-index/KNOWLEDGE_INDEX.md",
+        "10-knowledge-index/CONCEPTUAL_FOUNDATIONS.md",
         "08-session-context/MALAK_SESSION_CONTEXT.md",
         "05-decisions/PENDING_DECISIONS.md",
         "03-roadmap/IMPLEMENTATION_ROADMAP.md",
