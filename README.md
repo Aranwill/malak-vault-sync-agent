@@ -181,6 +181,49 @@ contienen una propuesta histórica, `run-once`, `accept-proposal` y
 `reject-proposal` permanecen bloqueados hasta completar la reconciliación
 migrada explícita. No se debe editar el JSON manualmente.
 
+## Trigger de reconciliación post-merge
+
+El modo operativo continúa siendo `manual-on-demand`, pero un merge en
+`Aranwill/jarvis/main` que afecte rutas observadas o mapeadas constituye un
+trigger explícito para evaluar sincronización.
+
+Flujo esperado:
+
+```text
+merge en jarvis/main
+        ↓
+evaluar rutas modificadas
+        ↓
+dry-run
+        ↓
+review de findings / candidatos
+        ↓
+controlled-proposal cuando corresponda
+        ↓
+revisión humana
+        ↓
+reconciliación de estado
+```
+
+La existencia del trigger:
+
+- no convierte al Sync Agent en scheduler;
+- no ejecuta sincronización automáticamente;
+- no reabre un Sprint ya cerrado;
+- no convierte al Vault en fuente de verdad;
+- no concede autoridad al Sync Agent;
+- no permite ocultar un fallo como reconciliación exitosa.
+
+Si la sincronización falla, `Aranwill/jarvis/main` continúa siendo la fuente
+oficial y el drift debe permanecer visible y clasificable.
+
+Cuando la proyección derivada vaya a utilizarse para una nueva admission review
+de Malāk, los `BASELINE_DRIFT`, `PROJECTION_DRIFT`, `STATE_DRIFT` o drifts
+semánticos relevantes conocidos deben estar reconciliados, resueltos o
+aceptados explícitamente como riesgo documentado. Esta condición pertenece a
+la disciplina de planificación de Malāk; el Sync Agent no la autoimpone como
+autoridad sobre el proyecto.
+
 ## Reconciliar una propuesta
 
 Para una propuesta v3 ordinaria, después de revisar su PR:
@@ -251,8 +294,9 @@ Códigos de salida:
 ## Operación manual
 
 El modo operativo aprobado es `manual-on-demand`: el propietario invoca
-`run-once` después de una sesión de trabajo o cuando decide auditar un
-cambio publicado. No existe scheduler activo ni ejecución residente.
+`run-once` después de una sesión de trabajo, después de un merge relevante o
+cuando decide auditar un cambio publicado. No existe scheduler activo ni
+ejecución residente.
 
 El script `scripts/install-scheduled-task.ps1` se conserva solo como
 artefacto histórico y capacidad opcional no habilitada. Activarlo requiere
