@@ -45,6 +45,7 @@ _ALLOWED_VAULT_PATHS = {
     "03-roadmap/IMPLEMENTATION_ROADMAP.md",
     "04-sprints/SPRINT_INDEX.md",
     "05-decisions/PENDING_DECISIONS.md",
+    "06-security/SECURITY_INDEX.md",
     "07-audits/AUDIT_INDEX.md",
     "08-session-context/MALAK_SESSION_CONTEXT.md",
     "10-knowledge-index/CONCEPTUAL_FOUNDATIONS.md",
@@ -163,6 +164,7 @@ _DEFAULT_RULES = (
         ),
         vault_candidates=(
             "02-current-baseline/CURRENT_BASELINE.md",
+            "06-security/SECURITY_INDEX.md",
             "07-audits/AUDIT_INDEX.md",
             "08-session-context/MALAK_SESSION_CONTEXT.md",
         ),
