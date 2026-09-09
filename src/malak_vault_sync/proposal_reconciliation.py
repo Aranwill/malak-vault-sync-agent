@@ -351,6 +351,11 @@ def reconcile_migrated_proposal(
                     "without merge."
                 )
 
+            _cleanup_rejected_proposal_branch(
+                config,
+                state=identified_state,
+                pull_request=pull_request,
+            )
             rejected_state = identified_state.reject_pending_proposal(
                 expected_commit=expected_commit,
             )
@@ -417,7 +422,147 @@ def reject_proposal(
                 "The pending proposal pull request is not closed without merge."
             )
 
+        _cleanup_rejected_proposal_branch(
+            config,
+            state=state,
+            pull_request=pull_request,
+        )
         save_state(config.state.path, next_state)
+
+
+def _cleanup_rejected_proposal_branch(
+    config: AgentConfig,
+    *,
+    state: SyncState,
+    pull_request: PullRequestSnapshot,
+) -> None:
+    """Delete only the verified branch owned by one rejected proposal."""
+
+    assert config.proposal is not None
+    assert state.pending_proposal_commit is not None
+    assert state.pending_proposal_vault_commit is not None
+
+    expected_branch = (
+        f"{config.proposal.branch_prefix}-"
+        f"{state.pending_proposal_commit[:8]}"
+    )
+    expected_head = state.pending_proposal_vault_commit.lower()
+
+    if (
+        pull_request.state != "CLOSED"
+        or pull_request.merged_at is not None
+        or pull_request.head_branch != expected_branch
+        or pull_request.head_commit != expected_head
+    ):
+        raise ProposalReconciliationError(
+            "Rejected proposal branch cleanup requires exact closed "
+            "proposal identity."
+        )
+
+    remote_head = _read_remote_branch_head(
+        config,
+        branch=expected_branch,
+    )
+    if remote_head is None:
+        return
+    if remote_head != expected_head:
+        raise ProposalReconciliationError(
+            "Rejected proposal branch changed after review; cleanup blocked."
+        )
+
+    remote_ref = f"refs/heads/{expected_branch}"
+    _run_branch_cleanup_git(
+        config,
+        "push",
+        f"--force-with-lease={remote_ref}:{expected_head}",
+        config.vault.remote,
+        f":{remote_ref}",
+        operation="Rejected proposal branch cleanup",
+    )
+
+    if _read_remote_branch_head(config, branch=expected_branch) is not None:
+        raise ProposalReconciliationError(
+            "Rejected proposal branch still exists after cleanup."
+        )
+
+
+def _read_remote_branch_head(
+    config: AgentConfig,
+    *,
+    branch: str,
+) -> str | None:
+    remote_ref = f"refs/heads/{branch}"
+    output = _run_branch_cleanup_git(
+        config,
+        "ls-remote",
+        "--heads",
+        config.vault.remote,
+        remote_ref,
+        operation="Rejected proposal branch inspection",
+    )
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        return None
+    if len(lines) != 1:
+        raise ProposalReconciliationError(
+            "Rejected proposal branch inspection returned ambiguous refs."
+        )
+
+    fields = lines[0].split("\t")
+    if len(fields) != 2 or fields[1] != remote_ref:
+        raise ProposalReconciliationError(
+            "Rejected proposal branch inspection returned invalid metadata."
+        )
+
+    head = fields[0].strip().lower()
+    if (
+        len(head) != 40
+        or any(character not in "0123456789abcdef" for character in head)
+    ):
+        raise ProposalReconciliationError(
+            "Rejected proposal branch inspection returned invalid commit."
+        )
+    return head
+
+
+def _run_branch_cleanup_git(
+    config: AgentConfig,
+    *args: str,
+    operation: str,
+) -> str:
+    command = ["git", *args]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=config.vault.local_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=config.limits.command_timeout_seconds,
+            check=False,
+            shell=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise ProposalReconciliationError(
+            f"{operation} could not be executed."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ProposalReconciliationError(
+            f"{operation} timed out."
+        ) from exc
+
+    if completed.returncode != 0:
+        detail = (
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or "unknown command error"
+        )
+        raise ProposalReconciliationError(
+            f"{operation} failed: {sanitize_text(detail)}"
+        )
+
+    return completed.stdout.strip()
 
 
 def inspect_pull_request(
@@ -459,7 +604,7 @@ def inspect_pull_request(
         ) from exc
     except subprocess.TimeoutExpired as exc:
         raise ProposalReconciliationError(
-            f"Command timed out: {github_cli}"
+            f"Command timed out: {config.proposal.github_cli}"
         ) from exc
 
     if completed.returncode != 0:
