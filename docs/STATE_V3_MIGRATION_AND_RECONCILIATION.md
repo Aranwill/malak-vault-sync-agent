@@ -85,13 +85,34 @@ malak-vault-sync reconcile-migrated-proposal `
   --pull-request-url <URL_PR_VAULT>
 ```
 
-Resultado:
+Antes de persistir el rechazo, el agente reconcilia también el lifecycle de la
+rama remota exacta de la propuesta:
 
+1. verifica que la PR esté `CLOSED` y sin merge;
+2. deriva `agent/vault-sync-<SHA8>` únicamente desde el commit de Malāk
+   pendiente ya identificado;
+3. exige que nombre de rama y commit de cabecera de la PR coincidan con la
+   identidad gobernada;
+4. consulta el HEAD remoto de esa referencia exacta;
+5. si la rama ya no existe, continúa de forma idempotente;
+6. si existe y coincide con `pending_proposal_vault_commit`, la elimina usando
+   una lease ligada a ese SHA y verifica luego su ausencia;
+7. si el HEAD cambió, la respuesta es ambigua, falla Git, vence el timeout, la
+   lease no coincide o la rama continúa existiendo, aborta sin persistir el
+   rechazo.
+
+Resultado exitoso:
+
+- la rama remota exacta de la propuesta rechazada queda ausente;
 - `last_reconciled_commit` queda en `expected-base-commit`;
 - los cuatro campos pendientes quedan en `null`;
 - `last_applied_commit` permanece en `null`;
 - el archivo persistido pasa a esquema v3;
 - el archivo heredado queda en `sync-state.json.prev`.
+
+La eliminación no usa patrones, wildcards ni takeover de ramas. La lease actúa
+como compare-and-delete sobre una referencia y SHA previamente verificados; no
+habilita un force-push de contenido.
 
 ## Bloqueos seguros
 
@@ -106,9 +127,15 @@ La reconciliación termina con código `2` y no persiste cambios cuando:
 - la PR continúa abierta;
 - se intenta aceptar una PR no mergeada;
 - se intenta rechazar una PR mergeada;
+- la rama rechazada existe con un HEAD distinto del commit de propuesta;
+- la inspección o eliminación de la rama remota falla o queda ambigua;
+- la rama continúa existiendo después del cleanup;
 - `gh` falla, expira el timeout o devuelve datos ambiguos;
 - `agent.lock` ya existe;
 - falla la lectura o la escritura local.
+
+En todos los fallos de cleanup anteriores, el state previo debe conservar la
+propuesta pendiente para permitir una inspección o reintento gobernado.
 
 Los códigos de salida son:
 
@@ -126,7 +153,9 @@ reconciliación allí. Verificar:
 3. campos pendientes en `null`;
 4. `last_applied_commit` en `null`;
 5. backup `.prev` idéntico al estado heredado original;
-6. ausencia de cambios en Malāk y en `main` del Vault.
+6. ausencia de cambios en Malāk y en `main` del Vault;
+7. en rechazo, ausencia de la rama remota exacta o evidencia de que ya estaba
+   ausente antes del cleanup.
 
 Esta validación sobre copia no autoriza la migración del estado operativo.
 
@@ -143,14 +172,18 @@ Si se necesita revertir una reconciliación local recién persistida:
 7. volver a validar los hashes;
 8. registrar la decisión y el resultado.
 
-El rollback es local. No revierte PR, commit ni merge alguno y requiere
-una decisión humana separada.
+El rollback del state es local. No recrea una rama de propuesta eliminada ni
+revierte PR, commit o merge alguno; cualquier recreación de una propuesta debe
+ocurrir mediante un nuevo `run-once` gobernado y requiere una decisión humana
+separada.
 
 ## Prohibiciones
 
 - no editar campos individuales del estado;
 - no inferir una PR por fecha, nombre de rama o similitud de contenido;
 - no aceptar ni rechazar automáticamente;
+- no borrar ramas por prefijo, wildcard o similitud;
+- no borrar una rama cuyo SHA no coincida con la identidad persistida;
 - no ejecutar la reconciliación sobre un estado v3 ordinario;
 - no modificar snapshots históricos;
 - no usar esta operación para escribir en Malāk o en `main` del Vault.
