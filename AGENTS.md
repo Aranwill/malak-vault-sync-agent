@@ -76,6 +76,7 @@ El Sync Agent no puede:
 - aprobar Pull Requests;
 - mergear Pull Requests;
 - promover Pull Requests a `Ready for Review`;
+- eliminar ramas remotas del Vault; la limpieza de ramas pertenece al Owner;
 - modificar snapshots históricos;
 - cerrar decisiones de arquitectura o gobernanza;
 - utilizar LLM para decidir mappings o contenido;
@@ -231,6 +232,10 @@ known by existing mapping?
   │
   └── no
        ↓
+   SOURCE_PATH_UNMAPPED
+       ↓
+   validation error / FAIL
+       ↓
    classify relevance
        ↓
    determine disposition
@@ -321,26 +326,33 @@ inventar destino sin evidencia           NO
 crear nueva autoridad documental         NO
 reescribir Malāk para ajustar mapping    NO
 ocultar finding agregando una regla      NO
+eliminar ramas remotas para resolver drift NO
 ```
 
 Toda ampliación material de `_DEFAULT_RULES`, `_ALLOWED_VAULT_PATHS`, patrones
 ignorados o reglas equivalentes debe tratarse como cambio de comportamiento del
 Sync Agent y requiere alcance, tests, revisión y aprobación humana.
 
-## Importante: AGENTS.md no implementa discovery automático
+## Cobertura automática vigente
 
-Estas instrucciones establecen la obligación de detectar y evaluar cobertura
-durante el desarrollo, revisión y evolución del Sync Agent.
+El runtime actual ya implementa detección determinista de rutas fuente no
+mapeadas. `candidate_resolver.find_unmapped_source_paths()` evalúa las rutas
+nuevas y anteriores de renames contra mappings e ignores explícitos; luego
+`runner._validate_source_mapping_coverage()` transforma cada ruta no cubierta en
+un finding:
 
-Por sí solas no convierten el runtime actual en un detector automático de rutas
-no mapeadas.
+```text
+severity: error
+code: SOURCE_PATH_UNMAPPED
+```
 
-Si se desea que `run-once` emita programáticamente `COVERAGE_DRIFT` para toda
-ruta nueva no reconocida, esa capacidad deberá implementarse en un cambio
-separado y aprobado, con especificación, tests y evidencia.
+Un finding de severidad `error` produce conclusión `FAIL` y bloquea la creación
+de una propuesta controlada. Por lo tanto, una ruta relevante no reconocida no
+debe omitirse silenciosamente ni convertirse automáticamente en una regla.
 
-No se debe presentar una regla documental como si ya fuese una capability
-implementada.
+Esta capability detecta falta de cobertura; **no decide cómo corregirla**. La
+clasificación del gap y cualquier cambio de mapping siguen requiriendo evidencia,
+packet separado y aprobación humana.
 
 ## Candidate Resolver y mappings
 
@@ -670,16 +682,16 @@ deterministic ordering
 no unrelated candidate expansion
 ```
 
-Para una futura implementación automática de `COVERAGE_DRIFT`, probar además:
+Para el enforcement vigente de cobertura, probar además:
 
 ```text
-unmapped relevant path → finding
+unmapped relevant path → SOURCE_PATH_UNMAPPED / error
 explicitly ignored path → no false positive
 mapped path → no coverage finding
-protected path → protected classification
 rename old/new path handling
 deterministic evidence
 no automatic rule mutation
+critical source surfaces → expected candidate set
 ```
 
 ## Validación proporcional sin loops
