@@ -1,19 +1,23 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches:
       - main
-  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
+  candidate-validation:
+    name: Candidate validation (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -21,25 +25,72 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
+          - macos-latest
+
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout exact candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Verify candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "candidate_sha=$actual"
+          echo "base_sha=$BASE_SHA"
+
+          if [[ "$actual" != "$CANDIDATE_SHA" ]]; then
+            echo "Candidate identity mismatch: expected $CANDIDATE_SHA, got $actual" >&2
+            exit 1
+          fi
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: pyproject.toml
 
-      - name: Install
+      - name: Install development dependencies
         run: python -m pip install -e ".[dev]"
 
-      - name: Test
+      - name: Run tests
         run: python -m pytest
 
-      - name: Compile
+      - name: Compile Python sources
         run: python -m compileall -q src tests
 
-      - name: Whitespace check
-        run: git show --check --oneline --no-renames HEAD
+      - name: Validate candidate diff
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${BASE_SHA:-}" ]]; then
+            echo "Missing base SHA for candidate diff validation." >&2
+            exit 1
+          fi
+
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              git diff --check --no-renames "$BASE_SHA...$CANDIDATE_SHA"
+              ;;
+            push)
+              if [[ "$BASE_SHA" =~ ^0+$ ]]; then
+                git show --check --format= --no-renames "$CANDIDATE_SHA"
+              else
+                git diff --check --no-renames "$BASE_SHA..$CANDIDATE_SHA"
+              fi
+              ;;
+            *)
+              echo "Unsupported workflow event: $GITHUB_EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
