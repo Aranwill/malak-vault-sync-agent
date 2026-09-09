@@ -242,6 +242,14 @@ malak-vault-sync reject-proposal `
   --expected-commit <SHA_MALAK>
 ```
 
+En un rechazo, el agente verifica la identidad exacta de la PR cerrada sin
+merge y de su rama `agent/vault-sync-<SHA8>`. Si la rama sigue existiendo y su
+HEAD coincide con `pending_proposal_vault_commit`, la elimina con una lease
+ligada a ese SHA y confirma después que desapareció. Recién entonces persiste
+el rechazo y limpia los campos pendientes. Si la rama cambió o el cleanup no
+puede demostrarse, la operación falla cerrada y el state pendiente se conserva.
+Una rama ya ausente se considera cleanup idempotentemente completado.
+
 Para una propuesta recuperada desde un archivo original v1 o v2, usar
 únicamente el comando gobernado de migración:
 
@@ -257,7 +265,9 @@ malak-vault-sync reconcile-migrated-proposal `
 
 El comando exige una decisión humana y evidencia completa, consulta
 GitHub bajo lock y persiste v3 solo si la URL, el commit de cabecera y el
-estado remoto coinciden. La guía de migración y rollback está en
+estado remoto coinciden. Los rechazos migrados aplican el mismo cleanup exacto
+y fail-closed de la rama antes de persistir el nuevo estado. La guía de
+migración y rollback está en
 `docs/STATE_V3_MIGRATION_AND_RECONCILIATION.md`.
 
 Salidas locales:
@@ -286,6 +296,7 @@ Códigos de salida:
 - lock de ejecución;
 - estado escrito de forma atómica con backup;
 - reconciliación v1/v2 explícita, sin inferir decisión ni identidad;
+- cleanup de rama rechazada limitado a la referencia y SHA verificados;
 - recuperación unívoca de una PR creada antes de un fallo de persistencia;
 - identificadores de ejecución con microsegundos;
 - credenciales sanitizadas en evidencia e informes;
