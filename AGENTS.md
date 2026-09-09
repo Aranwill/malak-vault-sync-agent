@@ -128,9 +128,11 @@ Sync Agent
 
 Malāk — source of truth
 ├── AGENTS.md
+├── SECURITY.md cuando se evalúe security-change o una proyección de seguridad
 ├── fuentes normativas aplicables
 ├── baseline vigente
 ├── docs/project/concepts/**
+├── docs/project/concepts/MALAK_RESEARCH_HORIZON_MAP.md cuando afecte la proyección conceptual
 ├── documents/projects/jarvis/ideas.md cuando corresponda
 ├── ADR / decisiones aplicables
 └── rutas nuevas o modificadas desde el último rango reconciliado
@@ -139,6 +141,7 @@ Project Vault — destino derivado
 ├── AGENTS.md
 ├── 00-governance/**
 ├── 02-current-baseline/**
+├── 06-security/**
 ├── 08-session-context/**
 ├── 10-knowledge-index/**
 ├── mappings/proyecciones afectadas
@@ -371,6 +374,24 @@ El mapping deberá ser:
 
 No se debe usar similitud semántica o una decisión probabilística para determinar
 qué archivo del Vault puede ser modificado.
+
+El mapping de seguridad vigente debe mantener visible el índice de seguridad del
+Vault para revisión contextual:
+
+```text
+SECURITY.md / docs/security/** / documents/projects/jarvis/security/**
+        ↓
+security-change
+        ↓
+02-current-baseline/CURRENT_BASELINE.md
+06-security/SECURITY_INDEX.md
+07-audits/AUDIT_INDEX.md
+08-session-context/MALAK_SESSION_CONTEXT.md
+```
+
+El hecho de que `06-security/SECURITY_INDEX.md` sea candidato no autoriza al
+Sync Agent a curar semántica automáticamente; lo incorpora al
+`Vault Context Reconciliation Gate` para revisión humana.
 
 ## Rutas conceptuales
 
