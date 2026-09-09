@@ -604,7 +604,7 @@ def inspect_pull_request(
         ) from exc
     except subprocess.TimeoutExpired as exc:
         raise ProposalReconciliationError(
-            f"Command timed out: {config.proposal.github_cli}"
+            f"Command timed out: {github_cli}"
         ) from exc
 
     if completed.returncode != 0:
