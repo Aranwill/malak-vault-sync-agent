@@ -171,8 +171,23 @@ malak-vault-sync reject-proposal `
   --expected-commit <SHA_MALAK>
 ```
 
-El rechazo conserva el cursor reconciliado anterior y elimina únicamente
-la propuesta pendiente.
+El rechazo conserva el cursor reconciliado anterior, elimina la rama remota
+exacta de la propuesta rechazada y recién después limpia los campos pendientes.
+La eliminación de rama es fail-closed:
+
+1. la PR debe estar `CLOSED` y sin merge;
+2. URL, base, nombre de rama y commit de cabecera deben coincidir con state v3;
+3. el HEAD remoto de `agent/vault-sync-<SHA8>` debe coincidir exactamente con
+   `pending_proposal_vault_commit`;
+4. la eliminación usa una lease ligada a ese SHA para impedir branch takeover
+   entre verificación y cleanup;
+5. si la rama ya no existe, el cleanup se considera idempotentemente completo;
+6. si la rama cambió, Git falla, la lease no coincide o la rama continúa
+   existiendo, `reject-proposal` falla y el state pendiente permanece intacto.
+
+No se usa borrado por patrón, wildcard, force-push de contenido ni eliminación
+de una rama cuya identidad no pueda demostrarse. Esto permite volver a proponer
+el mismo HEAD de Malāk después de un rechazo sin colisionar con una rama huérfana.
 
 ## Migración gobernada v1/v2
 
@@ -199,8 +214,9 @@ El comando:
 2. exige que el archivo original sea v1 o v2;
 3. verifica base, extremo, repositorio, URL y commit de cabecera;
 4. exige PR mergeada para aceptar o cerrada sin merge para rechazar;
-5. guarda v3 atómicamente y conserva el archivo original en `.prev`;
-6. mantiene `last_applied_commit` en `null`.
+5. al rechazar, aplica el mismo cleanup exacto y fail-closed de la rama remota;
+6. guarda v3 atómicamente y conserva el archivo original en `.prev`;
+7. mantiene `last_applied_commit` en `null`.
 
 No admite PR abierta, identidad incompleta, rango diferente, timeout,
 respuesta ambigua de GitHub, lock ocupado ni un archivo v3 ordinario.
@@ -219,8 +235,9 @@ Si existiera una tarea heredada, deshabilitarla explícitamente:
 Disable-ScheduledTask -TaskName MalakVaultSyncAgent
 ```
 
-Para revertir una propuesta no aprobada, cerrar la PR sin merge. Malāk y
-`main` del Vault permanecen intactos.
+Para revertir una propuesta no aprobada, cerrar la PR sin merge y ejecutar
+`reject-proposal`. El comando verifica y limpia la rama remota exacta antes de
+persistir el rechazo; Malāk y `main` del Vault permanecen intactos.
 
 Para revertir una reconciliación local recién persistida, detener el
 scheduler, conservar ambos archivos y restaurar
