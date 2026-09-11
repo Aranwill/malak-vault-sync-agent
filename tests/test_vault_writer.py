@@ -802,7 +802,7 @@ def test_prepare_proposal_commits_content_before_audit(
     ) == ""
 
 
-def test_prepare_proposal_rolls_back_branch_when_pr_creation_fails(
+def test_prepare_proposal_preserves_remote_branch_when_pr_creation_fails(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -887,10 +887,7 @@ def test_prepare_proposal_rolls_back_branch_when_pr_creation_fails(
     )
     branch = "agent/vault-sync-bbbbbbbb"
 
-    with pytest.raises(
-        VaultProposalError,
-        match="published proposal branch was rolled back",
-    ):
+    with pytest.raises(VaultProposalError) as exc_info:
         prepare_vault_proposal(
             vault_root=vault,
             evidence=evidence,
@@ -903,14 +900,19 @@ def test_prepare_proposal_rolls_back_branch_when_pr_creation_fails(
             timeout_seconds=30,
         )
 
-    assert _run(
+    remote_branch = _run(
         "git",
         "ls-remote",
         "--heads",
         "origin",
         f"refs/heads/{branch}",
         cwd=vault,
-    ) == ""
+    )
+    assert remote_branch.endswith(f"refs/heads/{branch}")
+    assert branch in str(exc_info.value)
+    assert "preserved for Owner-controlled inspection and cleanup" in str(
+        exc_info.value
+    )
     assert _run("git", "branch", "--list", branch, cwd=vault) == ""
 
 

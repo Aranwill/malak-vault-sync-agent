@@ -249,15 +249,11 @@ def prepare_vault_proposal(
                     timeout_seconds=timeout_seconds,
                 )
             except VaultProposalError as exc:
-                _rollback_published_branch(
-                    worktree,
-                    remote=remote,
-                    branch=branch,
-                    timeout_seconds=timeout_seconds,
-                )
                 raise VaultProposalError(
-                    "Draft PR creation failed; the published proposal "
-                    "branch was rolled back."
+                    "Draft PR creation failed after publishing the proposal "
+                    f"branch {branch}. The remote branch was preserved for "
+                    "Owner-controlled inspection and cleanup. The remote PR "
+                    "result may be unknown; inspect GitHub before retrying."
                 ) from exc
         finally:
             _git(
@@ -1177,34 +1173,6 @@ def _open_draft_pr(
         cwd=worktree,
         timeout_seconds=timeout_seconds,
     )
-
-
-def _rollback_published_branch(
-    worktree: Path,
-    *,
-    remote: str,
-    branch: str,
-    timeout_seconds: int,
-) -> None:
-    if _BRANCH_PATTERN.fullmatch(branch) is None:
-        raise VaultProposalError(
-            f"Refusing to roll back an unsafe branch name: {branch}"
-        )
-
-    try:
-        _git(
-            worktree,
-            "push",
-            remote,
-            "--delete",
-            branch,
-            timeout_seconds=timeout_seconds,
-        )
-    except VaultProposalError as exc:
-        raise VaultProposalError(
-            "Draft PR creation failed and the published proposal branch "
-            f"could not be rolled back: {branch}."
-        ) from exc
 
 
 def _delete_local_branch(

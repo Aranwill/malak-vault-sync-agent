@@ -172,31 +172,32 @@ v3 quedó reconciliado.
 Este incidente demuestra una condición operativa real que debe permanecer
 visible en futuras revisiones.
 
-## Hallazgo heredado que no se corrige en este packet
+## Resolución de `KNOWN_AUTHORITY_DRIFT` — F-01
 
-La documentación vigente de `controlled-proposal` describe un camino histórico
-en el que, si el push de una propuesta funciona pero la creación de la Draft PR
-falla, puede realizarse cleanup automático de la rama remota.
+El rollback remoto automático posterior a un fallo de creación de Draft PR
+contradecía la frontera Owner-only definida por este documento.
 
-Esa conducta entra en tensión con la frontera Owner-only establecida aquí.
+Este cambio elimina esa acción destructiva del failure path.
 
-Por instrucción explícita del Owner, **este packet no modifica runtime ni lógica
-del agente**. En consecuencia:
+A partir de este cambio:
 
-- no se agrega ninguna nueva eliminación automática;
-- no se modifica `reject-proposal`;
-- no se modifica `proposal_reconciliation.py`;
-- no se modifica el writer;
-- no se modifican Git operations;
-- no se modifica state v3;
-- no se cambia versión;
-- no se agregan tests de eliminación.
+- si el `push` de la rama de propuesta ya ocurrió y la creación o confirmación
+  de la Draft PR falla, la rama remota permanece intacta;
+- el fallo reporta la identidad de la rama y conserva visible la posibilidad de
+  un resultado remoto desconocido;
+- el worktree y la rama local temporal pueden seguir limpiándose como
+  housekeeping local;
+- el agente no ejecuta borrado remoto, force-push ni takeover para recuperarse;
+- cualquier cleanup de la rama remota continúa siendo una decisión y una acción
+  exclusiva del Owner.
 
-La discrepancia existente debe permanecer visible como `KNOWN_AUTHORITY_DRIFT`
-hasta que el Owner decida explícitamente si corresponde un cambio separado.
-No puede usarse este documento como autorización implícita para modificar ese
-comportamiento.
+El fallo continúa resolviendo de forma cerrada: no se presenta una propuesta
+como completada cuando no existe confirmación suficiente del circuito remoto.
 
+```text
+Agent-created remote branch
+!=
+agent-owned destructive authority
 ## Relación con actualización del Vault
 
 Esta frontera no cambia el propósito principal del Sync Agent:
