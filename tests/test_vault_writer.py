@@ -1004,3 +1004,153 @@ def test_update_audit_index_rejects_directory_escape_before_write(
     assert outside_index.read_text(encoding="utf-8") == (
         "# Outside\n\nUNCHANGED\n"
     )
+
+@pytest.mark.parametrize(
+    ("upsert", "content"),
+    (
+        (
+            _upsert_managed_block,
+            f"{_MANAGED_START}\nold\n{_MANAGED_END}\n\n"
+            f"{_MANAGED_START}\nstale\n{_MANAGED_END}\n",
+        ),
+        (
+            _upsert_managed_block,
+            f"{_MANAGED_END}\nold\n{_MANAGED_START}\n",
+        ),
+        (
+            _upsert_managed_block,
+            f"{_MANAGED_START}\nouter\n"
+            f"{_MANAGED_START}\ninner\n"
+            f"{_MANAGED_END}\n"
+            f"{_MANAGED_END}\n",
+        ),
+        (
+            writer_module._upsert_operational_state_block,
+            f"{writer_module._OPERATIONAL_STATE_START}\nold\n"
+            f"{writer_module._OPERATIONAL_STATE_END}\n\n"
+            f"{writer_module._OPERATIONAL_STATE_START}\nstale\n"
+            f"{writer_module._OPERATIONAL_STATE_END}\n",
+        ),
+        (
+            writer_module._upsert_operational_state_block,
+            f"{writer_module._OPERATIONAL_STATE_END}\nold\n"
+            f"{writer_module._OPERATIONAL_STATE_START}\n",
+        ),
+        (
+            writer_module._upsert_operational_state_block,
+            f"{writer_module._OPERATIONAL_STATE_START}\nouter\n"
+            f"{writer_module._OPERATIONAL_STATE_START}\ninner\n"
+            f"{writer_module._OPERATIONAL_STATE_END}\n"
+            f"{writer_module._OPERATIONAL_STATE_END}\n",
+        ),
+    ),
+)
+def test_machine_owned_upserts_reject_ambiguous_marker_structure(
+    upsert,
+    content: str,
+) -> None:
+    with pytest.raises(VaultProposalError):
+        upsert(content, "replacement")
+
+
+@pytest.mark.parametrize(
+    "duplicate_kind",
+    ("managed", "operational"),
+)
+def test_projection_consistency_rejects_duplicate_machine_owned_blocks(
+    tmp_path: Path,
+    duplicate_kind: str,
+) -> None:
+    evidence = _evidence(tmp_path)
+    candidate = _candidate()
+    source_projection = SourceProjection(
+        sprint_document="docs/project/sprints/SPRINT-7.7.md",
+        sprint_title="Sprint 7.7 - Baseline certification",
+        sprint_status="completado",
+        sprint_as_of_commit="sprint77",
+        commit_summaries=(),
+    )
+
+    managed_block = writer_module._render_projection(
+        evidence,
+        candidate,
+        source_projection,
+    )
+    operational_state = writer_module._build_operational_state(
+        evidence,
+        source_projection,
+    )
+    operational_block = writer_module._render_operational_state(
+        operational_state
+    )
+
+    stale_managed = managed_block.replace(
+        evidence.commit_range.head_commit,
+        "f" * 40,
+        1,
+    )
+    stale_operational = operational_block.replace(
+        source_projection.sprint_as_of_commit,
+        "stale-sprint",
+        1,
+    )
+
+    if duplicate_kind == "managed":
+        body = (
+            managed_block
+            + "\n\n"
+            + stale_managed
+            + "\n\n"
+            + operational_block
+        )
+    else:
+        body = (
+            managed_block
+            + "\n\n"
+            + operational_block
+            + "\n\n"
+            + stale_operational
+        )
+
+    target = tmp_path / candidate.path
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "# Current Baseline\n\n" + body + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(VaultProposalError):
+        writer_module._validate_projection_consistency(
+            tmp_path,
+            (candidate,),
+            evidence,
+            source_projection,
+        )
+
+@pytest.mark.parametrize(
+    ("upsert", "content"),
+    (
+        (
+            _upsert_managed_block,
+            f"{_MANAGED_START}\n"
+            f"{writer_module._OPERATIONAL_STATE_START}\n"
+            "nested\n"
+            f"{writer_module._OPERATIONAL_STATE_END}\n"
+            f"{_MANAGED_END}\n",
+        ),
+        (
+            writer_module._upsert_operational_state_block,
+            f"{writer_module._OPERATIONAL_STATE_START}\n"
+            f"{_MANAGED_START}\n"
+            "nested\n"
+            f"{_MANAGED_END}\n"
+            f"{writer_module._OPERATIONAL_STATE_END}\n",
+        ),
+    ),
+)
+def test_machine_owned_upserts_reject_cross_type_nesting(
+    upsert,
+    content: str,
+) -> None:
+    with pytest.raises(VaultProposalError):
+        upsert(content, "replacement")
