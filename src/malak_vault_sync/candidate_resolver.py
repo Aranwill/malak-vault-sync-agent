@@ -83,6 +83,7 @@ _DEFAULT_RULES = (
             "docs/project/project_context.md",
             "docs/project/repository_standard.md",
             "docs/project/roadmap.md",
+            "docs/project/status/**",
             "docs/project/sprints/**",
             "documents/projects/jarvis/releases/**",
             "documents/projects/jarvis/sprints/**",
@@ -333,7 +334,6 @@ def is_allowed_vault_path(path: str) -> bool:
         normalized in _ALLOWED_VAULT_PATHS
         and not is_denied_vault_path(normalized)
     )
-
 def is_explicitly_ignored_source_path(path: str) -> bool:
     normalized = _normalize_source_path(path)
 
