@@ -704,22 +704,108 @@ def _frontmatter_value(content: str, key: str) -> str | None:
     )[:500]
 
 
-def _upsert_operational_state_block(content: str, block: str) -> str:
-    start = content.find(_OPERATIONAL_STATE_START)
-    end = content.find(_OPERATIONAL_STATE_END)
+def _machine_owned_block_span(
+    content: str,
+    start_marker: str,
+    end_marker: str,
+    label: str,
+) -> tuple[int, int] | None:
+    starts = [
+        match.start()
+        for match in re.finditer(
+            re.escape(start_marker),
+            content,
+        )
+    ]
+    ends = [
+        match.start()
+        for match in re.finditer(
+            re.escape(end_marker),
+            content,
+        )
+    ]
 
-    if (start == -1) != (end == -1):
+    if len(starts) != len(ends):
         raise VaultProposalError(
-            "Malformed operational state block."
+            f"Malformed {label} block: unmatched markers."
         )
 
-    if start != -1:
-        end += len(_OPERATIONAL_STATE_END)
+    if not starts:
+        return None
+
+    if len(starts) != 1:
+        raise VaultProposalError(
+            f"Ambiguous {label} block: "
+            "expected exactly one marker pair."
+        )
+
+    start = starts[0]
+    end_marker_start = ends[0]
+
+    if end_marker_start < start:
+        raise VaultProposalError(
+            f"Malformed {label} block: "
+            "END marker precedes START marker."
+        )
+
+    return (
+        start,
+        end_marker_start + len(end_marker),
+    )
+
+
+def _machine_owned_block_structure(
+    content: str,
+) -> tuple[
+    tuple[int, int] | None,
+    tuple[int, int] | None,
+]:
+    managed_span = _machine_owned_block_span(
+        content,
+        _MANAGED_START,
+        _MANAGED_END,
+        "managed synchronization",
+    )
+    operational_span = _machine_owned_block_span(
+        content,
+        _OPERATIONAL_STATE_START,
+        _OPERATIONAL_STATE_END,
+        "operational state",
+    )
+
+    if (
+        managed_span is not None
+        and operational_span is not None
+    ):
+        managed_start, managed_end = managed_span
+        operational_start, operational_end = operational_span
+
+        if max(managed_start, operational_start) < min(
+            managed_end,
+            operational_end,
+        ):
+            raise VaultProposalError(
+                "Ambiguous machine-owned block structure: "
+                "managed and operational blocks overlap or nest."
+            )
+
+    return managed_span, operational_span
+
+
+def _upsert_operational_state_block(
+    content: str,
+    block: str,
+) -> str:
+    managed_span, operational_span = (
+        _machine_owned_block_structure(content)
+    )
+
+    if operational_span is not None:
+        start, end = operational_span
         return content[:start] + block + content[end:]
 
-    managed_end = content.find(_MANAGED_END)
-    if managed_end != -1:
-        insertion = managed_end + len(_MANAGED_END)
+    if managed_span is not None:
+        insertion = managed_span[1]
         return (
             content[:insertion]
             + "\n\n"
@@ -746,17 +832,14 @@ def _upsert_operational_state_block(content: str, block: str) -> str:
     )
 
 
-def _upsert_managed_block(content: str, block: str) -> str:
-    start = content.find(_MANAGED_START)
-    end = content.find(_MANAGED_END)
+def _upsert_managed_block(
+    content: str,
+    block: str,
+) -> str:
+    managed_span, _ = _machine_owned_block_structure(content)
 
-    if (start == -1) != (end == -1):
-        raise VaultProposalError(
-            "Malformed managed synchronization block."
-        )
-
-    if start != -1:
-        end += len(_MANAGED_END)
+    if managed_span is not None:
+        start, end = managed_span
         return content[:start] + block + content[end:]
 
     heading = content.find("\n# ")
@@ -999,16 +1082,18 @@ def _validate_projection_consistency(
         )
         content = path.read_text(encoding="utf-8-sig")
 
-        start = content.find(_MANAGED_START)
-        end = content.find(_MANAGED_END)
+        managed_span, operational_span = (
+            _machine_owned_block_structure(content)
+        )
 
-        if start == -1 or end == -1 or end < start:
+        if managed_span is None:
             raise VaultProposalError(
                 "Projection consistency check failed: managed block missing "
                 f"for {candidate.path}."
             )
 
-        actual_block = content[start : end + len(_MANAGED_END)]
+        start, end = managed_span
+        actual_block = content[start:end]
         expected_block = _render_projection(
             evidence,
             candidate,
@@ -1021,20 +1106,13 @@ def _validate_projection_consistency(
                 f"{candidate.path}."
             )
 
-        operational_start = content.find(_OPERATIONAL_STATE_START)
-        operational_end = content.find(_OPERATIONAL_STATE_END)
-
-        if (
-            operational_start == -1
-            or operational_end == -1
-            or operational_end < operational_start
-        ):
+        if operational_span is None:
             raise VaultProposalError(
                 "Projection consistency check failed: operational state "
                 f"block missing for {candidate.path}."
             )
 
-        operational_end += len(_OPERATIONAL_STATE_END)
+        operational_start, operational_end = operational_span
         actual_operational_block = content[
             operational_start:operational_end
         ]
