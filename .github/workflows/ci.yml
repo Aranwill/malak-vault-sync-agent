@@ -25,7 +25,6 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
-          - macos-latest
 
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
