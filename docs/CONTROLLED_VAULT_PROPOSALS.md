@@ -162,9 +162,45 @@ malak-vault-sync accept-proposal `
   --expected-commit <SHA_MALAK>
 ```
 
-El agente verifica que la URL y el commit de cabecera coincidan con el
-estado persistido y que GitHub informe la PR como mergeada. Solo entonces
-avanza `last_reconciled_commit`.
+El agente verifica la URL, la rama base y la rama determinista de
+propuesta contra el estado persistido. Si el HEAD observado coincide con
+`pending_proposal_vault_commit`, la identidad de cabecera es exacta. Si el
+HEAD final cambió, la aceptación solo puede continuar cuando GitHub informa
+la PR como mergeada y el commit original de propuesta es ancestro del HEAD
+final. Solo entonces avanza `last_reconciled_commit`.
+
+### Límite de assurance de la reconciliación
+
+`accept-proposal` demuestra una decisión humana compatible con una PR
+mergeada y una identidad/lineage verificables. No obtiene ni compara el árbol
+del merge final, el diff final ni una identidad criptográfica del contenido
+que fue revisado.
+
+Por lo tanto:
+
+```text
+reconciled
+!=
+final content equivalence certificate
+```
+
+La ascendencia del commit original demuestra continuidad histórica, no que
+cada archivo del HEAD final sea idéntico al contenido generado o revisado
+originalmente. Un descendiente legítimo puede contener correcciones humanas,
+modificaciones adicionales o reversiones.
+
+last_reconciled_commit significa que el rango de Malāk quedó reconciliado
+mediante la decisión humana y las comprobaciones implementadas. No certifica
+por sí mismo equivalencia semántica, de árbol ni byte-a-byte entre propuesta
+original y resultado final mergeado.
+
+Un drift=0 observado posteriormente constituye evidencia separada sobre el
+estado derivado actual bajo las reglas vigentes; no convierte retroactivamente
+la reconciliación en una prueba de identidad del contenido final.
+
+Si en el futuro se requiere binding entre contenido revisado y contenido
+mergeado, deberá diseñarse y aprobarse en un gate separado, preservando las
+correcciones humanas legítimas y sin ampliar autoridad del agente.
 
 Después de cerrar una PR sin merge:
 
@@ -200,7 +236,8 @@ El comando:
 
 1. adquiere `agent.lock`;
 2. exige que el archivo original sea v1 o v2;
-3. verifica base, extremo, repositorio, URL y commit de cabecera;
+3. verifica base, extremo, repositorio, URL y lineage del commit
+original de propuesta;
 4. exige PR mergeada para aceptar o cerrada sin merge para rechazar;
 5. guarda v3 atómicamente y conserva el archivo original en `.prev`;
 6. mantiene `last_applied_commit` en `null`.
