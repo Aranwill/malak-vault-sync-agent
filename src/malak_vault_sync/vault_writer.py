@@ -21,12 +21,37 @@ from malak_vault_sync.validators import (
     has_errors,
     validate_markdown,
     validate_markdown_frontmatter,
+    validate_path,
     validate_relative_links,
 )
 
 
 class VaultProposalError(RuntimeError):
     """Raised when a governed Vault proposal cannot be prepared safely."""
+
+
+def _safe_worktree_path(
+    worktree: Path,
+    relative_path: str,
+) -> Path:
+    findings = validate_path(
+        worktree,
+        relative_path,
+        follow_symlinks=False,
+    )
+
+    if has_errors(findings):
+        error_codes = ", ".join(
+            finding.code
+            for finding in findings
+            if finding.severity == "error"
+        )
+        raise VaultProposalError(
+            "Unsafe Vault worktree path: "
+            f"{relative_path} ({error_codes})."
+        )
+
+    return worktree / relative_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,7 +393,10 @@ def _write_candidate_projections(
     operational_block = _render_operational_state(operational_state)
 
     for candidate in candidates:
-        path = worktree / candidate.path
+        path = _safe_worktree_path(
+            worktree,
+            candidate.path,
+        )
 
         if not path.is_file():
             raise VaultProposalError(
@@ -385,6 +413,10 @@ def _write_candidate_projections(
         updated = _upsert_operational_state_block(
             updated,
             operational_block,
+        )
+        path = _safe_worktree_path(
+            worktree,
+            candidate.path,
         )
         path.write_text(updated, encoding="utf-8", newline="\n")
         modified.append(candidate.path)
@@ -769,7 +801,10 @@ def _write_audit_report(
     if _REPORT_PATTERN.fullmatch(report_path) is None:
         raise VaultProposalError("Unsafe audit report path.")
 
-    path = worktree / report_path
+    path = _safe_worktree_path(
+        worktree,
+        report_path,
+    )
     if path.exists():
         raise VaultProposalError(
             f"Audit report already exists: {report_path}"
@@ -891,7 +926,16 @@ def _write_audit_report(
             "",
         ]
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
+    parent_path = _safe_worktree_path(
+        worktree,
+        Path(report_path).parent.as_posix(),
+    )
+    parent_path.mkdir(parents=True, exist_ok=True)
+
+    path = _safe_worktree_path(
+        worktree,
+        report_path,
+    )
     path.write_text(payload, encoding="utf-8", newline="\n")
     return report_path
 
@@ -903,7 +947,10 @@ def _update_audit_index(
     run_id: str,
 ) -> str:
     index_path = "07-audits/AUDIT_INDEX.md"
-    path = worktree / index_path
+    path = _safe_worktree_path(
+        worktree,
+        index_path,
+    )
     content = path.read_text(encoding="utf-8-sig")
     link_target = report_path.removesuffix(".md")
     entry = (
@@ -912,6 +959,10 @@ def _update_audit_index(
 
     if entry not in content:
         content = content.rstrip() + "\n\n" + entry + "\n"
+        path = _safe_worktree_path(
+            worktree,
+            index_path,
+        )
         path.write_text(content, encoding="utf-8", newline="\n")
 
     return index_path
@@ -942,7 +993,10 @@ def _validate_projection_consistency(
     )
 
     for candidate in candidates:
-        path = worktree / candidate.path
+        path = _safe_worktree_path(
+            worktree,
+            candidate.path,
+        )
         content = path.read_text(encoding="utf-8-sig")
 
         start = content.find(_MANAGED_START)
@@ -999,7 +1053,10 @@ def _validate_written_projections(
     findings: list[ValidationFinding] = []
 
     for relative_path in modified_paths:
-        path = worktree / relative_path
+        path = _safe_worktree_path(
+            worktree,
+            relative_path,
+        )
         findings.extend(validate_markdown(path))
         findings.extend(validate_markdown_frontmatter(path))
         findings.extend(validate_relative_links(path, worktree))

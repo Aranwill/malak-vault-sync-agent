@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 
 import pytest
@@ -937,3 +938,69 @@ def _run(*args: str, cwd: Path) -> str:
         check=True,
     )
     return completed.stdout.strip()
+
+def test_update_audit_index_rejects_directory_escape_before_write(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+
+    audit_dir = worktree / "07-audits"
+
+    if os.name == "nt":
+        env = os.environ.copy()
+        env["MALAK_F03_LINK"] = str(audit_dir)
+        env["MALAK_F03_TARGET"] = str(outside_dir)
+
+        completed = subprocess.run(
+            [
+                "pwsh.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                (
+                    "New-Item -ItemType Junction "
+                    "-Path $env:MALAK_F03_LINK "
+                    "-Target $env:MALAK_F03_TARGET "
+                    "| Out-Null"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+        if completed.returncode != 0:
+            pytest.fail(
+                "Could not create Windows junction: "
+                f"{completed.stderr or completed.stdout}"
+            )
+    else:
+        audit_dir.symlink_to(
+            outside_dir,
+            target_is_directory=True,
+        )
+
+    outside_index = outside_dir / "AUDIT_INDEX.md"
+    outside_index.write_text(
+        "# Outside\n\nUNCHANGED\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(VaultProposalError):
+        writer_module._update_audit_index(
+            worktree,
+            report_path=(
+                "07-audits/vault-synchronization/"
+                "2026-09-10_VAULT_SYNC_test.md"
+            ),
+            run_id="test",
+        )
+
+    assert outside_index.read_text(encoding="utf-8") == (
+        "# Outside\n\nUNCHANGED\n"
+    )
