@@ -103,10 +103,13 @@ genera evidencia y auditoría y registra una propuesta pendiente con:
 Mientras cualquiera de esos rangos permanezca pendiente, `run-once` no
 puede crear otra propuesta.
 
-Si el `push` de una propuesta funciona pero GitHub CLI no puede crear la
-PR draft, el agente elimina únicamente la rama remota de esa ejecución y
-no persiste el nuevo estado observado. La siguiente corrida puede
-reintentarlo sin reutilizar una rama huérfana.
+Si el `push` de una propuesta funciona pero GitHub CLI no puede confirmar la
+creación de la PR draft, el agente **no elimina ni modifica la rama remota**.
+La rama publicada permanece visible para inspección y cleanup exclusivamente
+humano. El fallo no se presenta como un circuito completado y el resultado
+remoto de la creación de PR se considera potencialmente desconocido hasta
+verificar GitHub. Un reintento no puede resolver una colisión mediante borrado,
+force-push ni takeover de la rama.
 
 Si la PR draft se crea pero falla la persistencia local posterior, la
 siguiente ejecución revisa las ramas deterministas
