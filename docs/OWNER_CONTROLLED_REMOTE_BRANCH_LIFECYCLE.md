@@ -198,6 +198,8 @@ como completada cuando no existe confirmación suficiente del circuito remoto.
 Agent-created remote branch
 !=
 agent-owned destructive authority
+```
+
 ## Relación con actualización del Vault
 
 Esta frontera no cambia el propósito principal del Sync Agent:
