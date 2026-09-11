@@ -162,6 +162,7 @@ def test_current_governance_path_returns_candidates() -> None:
         "configs/models.yaml",
         "docs/development/development_checklist.md",
         "docs/knowledge/recipes/REC-001.md",
+        "docs/project/status/MALAK-POST-AUDIT-REBASELINE-20260911.md",
         "documents/projects/jarvis/ideas.md",
         "examples/hello_kernel.py",
         "scripts/run.ps1",
