@@ -162,7 +162,9 @@ El estado v3 separa observación, reconciliación y propuesta pendiente:
 - `pending_proposal_base_commit` y `pending_proposal_commit` delimitan
   el rango sujeto a decisión humana;
 - `pending_proposal_vault_commit` y
-  `pending_proposal_pull_request_url` fijan la identidad exacta de la PR.
+  `pending_proposal_pull_request_url` fijan la identidad original de la
+  propuesta (HEAD del Vault publicado por el agente + URL), no una identidad
+  de contenido del resultado final mergeado.
 
 Por esa separación, una previsualización `dry-run` no consume el rango
 pendiente. Una ejecución posterior en `controlled-proposal` vuelve a
@@ -256,8 +258,17 @@ malak-vault-sync reconcile-migrated-proposal `
 ```
 
 El comando exige una decisión humana y evidencia completa, consulta
-GitHub bajo lock y persiste v3 solo si la URL, el commit de cabecera y el
-estado remoto coinciden. La guía de migración y rollback está en
+GitHub bajo lock y persiste v3 solo si la identidad remota satisface las
+reglas de reconciliación. El commit original de propuesta debe coincidir con
+el HEAD observado o, si el HEAD final cambió, ser ancestro del HEAD final de
+una PR mergeada.
+
+Esta comprobación demuestra identidad y lineage de la propuesta. No compara
+el árbol, el diff ni el contenido final mergeado contra una identidad de
+contenido previamente revisada y no debe interpretarse como certificación de
+equivalencia semántica o byte-a-byte.
+
+La guía de migración y rollback está en
 `docs/STATE_V3_MIGRATION_AND_RECONCILIATION.md`.
 
 Salidas locales:

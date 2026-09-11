@@ -51,7 +51,9 @@ No abrir el JSON para completar campos manualmente.
 ## Aceptación
 
 La aceptación requiere que GitHub informe la PR como mergeada y que la
-URL y el commit de cabecera coincidan exactamente:
+identidad remota satisfaga las reglas gobernadas. La URL debe coincidir;
+el commit original de propuesta debe ser el HEAD observado o, si el HEAD
+final cambió durante la revisión humana, ser ancestro de ese HEAD final:
 
 ```powershell
 malak-vault-sync reconcile-migrated-proposal `
@@ -70,6 +72,22 @@ Resultado:
 - `last_applied_commit` permanece en `null`;
 - el archivo persistido pasa a esquema v3;
 - el archivo heredado queda en `sync-state.json.prev`.
+
+La aceptación verifica identidad y linaje de la propuesta; no certifica
+equivalencia del contenido final. La comprobación de ascendencia permite
+conservar correcciones humanas legítimas, pero no compara el árbol, el
+diff ni los bytes del HEAD final contra el contenido originalmente
+generado o revisado.
+
+```text
+ancestry
+!=
+content equivalence
+```
+
+El estado reconciliado no debe utilizarse como evidencia de una propiedad
+que esta operación no verificó. Una eventual vinculación entre contenido
+revisado y contenido final mergeado requiere un gate de diseño separado.
 
 ## Rechazo
 
@@ -102,7 +120,8 @@ La reconciliación termina con código `2` y no persiste cambios cuando:
 - la base o el extremo no coinciden;
 - el SHA o la URL tienen formato inválido;
 - la URL pertenece a otro repositorio;
-- GitHub devuelve otra URL o commit de cabecera;
+- GitHub devuelve otra URL o el commit observado no satisface la
+  identidad o ascendencia permitida;
 - la PR continúa abierta;
 - se intenta aceptar una PR no mergeada;
 - se intenta rechazar una PR mergeada;
