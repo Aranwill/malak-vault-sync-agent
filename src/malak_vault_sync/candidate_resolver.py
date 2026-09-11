@@ -84,6 +84,7 @@ _DEFAULT_RULES = (
             "docs/project/repository_standard.md",
             "docs/project/roadmap.md",
             "docs/project/sprints/**",
+            "docs/project/status/**",
             "documents/projects/jarvis/releases/**",
             "documents/projects/jarvis/sprints/**",
             "documents/projects/jarvis/changelog.md",
