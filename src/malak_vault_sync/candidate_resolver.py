@@ -160,6 +160,7 @@ _DEFAULT_RULES = (
         rule_id="security-change",
         source_patterns=(
             "SECURITY.md",
+            "src/malak/security/**",
             "docs/security/**",
             "documents/projects/jarvis/security/**",
         ),

@@ -46,6 +46,26 @@ from malak_vault_sync.git_inspector import ChangedFile
             },
         ),
         (
+            "src/malak/security/pep.py",
+            {
+                "01-architecture/CURRENT_COMPONENTS_MAP.md",
+                "02-current-baseline/CURRENT_BASELINE.md",
+                "06-security/SECURITY_INDEX.md",
+                "07-audits/AUDIT_INDEX.md",
+                "08-session-context/MALAK_SESSION_CONTEXT.md",
+            },
+        ),
+        (
+            "src/malak/security/audit.py",
+            {
+                "01-architecture/CURRENT_COMPONENTS_MAP.md",
+                "02-current-baseline/CURRENT_BASELINE.md",
+                "06-security/SECURITY_INDEX.md",
+                "07-audits/AUDIT_INDEX.md",
+                "08-session-context/MALAK_SESSION_CONTEXT.md",
+            },
+        ),
+        (
             "docs/project/concepts/MALAK_RESEARCH_HORIZON_MAP.md",
             {
                 "10-knowledge-index/CONCEPTUAL_FOUNDATIONS.md",
@@ -98,6 +118,29 @@ def test_critical_source_path_is_mapped_without_omission(
         candidate.disposition == "review_required"
         for candidate in candidates
     )
+
+
+def test_security_runtime_source_records_security_change_provenance() -> None:
+    source_path = "src/malak/security/pep.py"
+    candidates = resolve_candidates(
+        (ChangedFile(status="M", path=source_path),)
+    )
+    by_path = {candidate.path: candidate for candidate in candidates}
+
+    assert "06-security/SECURITY_INDEX.md" in by_path
+    assert "07-audits/AUDIT_INDEX.md" in by_path
+    assert {
+        reason.rule_id
+        for reason in by_path[
+            "06-security/SECURITY_INDEX.md"
+        ].reasons
+    } == {"security-change"}
+    assert {
+        reason.rule_id
+        for reason in by_path[
+            "02-current-baseline/CURRENT_BASELINE.md"
+        ].reasons
+    } == {"architecture-change", "security-change"}
 
 
 def test_unknown_relevant_source_path_remains_visible_as_unmapped() -> None:
