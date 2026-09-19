@@ -27,7 +27,28 @@ external component is required for Malāk runtime operation.
 The Agent may observe Malāk's repository because that is its external
 responsibility. Observation does not make the Agent part of Malāk.
 
-## 2. Future repository operations
+## 2. One-way boundary verification
+
+A future read-only validation should verify the one-way architecture from the
+outside.
+
+The Agent may scan the current Malāk tree for forbidden reverse references to
+external support infrastructure and report a `BOUNDARY_DRIFT` finding when
+such coupling appears.
+
+This check must remain entirely outside Malāk. Malāk must not contain a
+reciprocal checker, configuration, import, URL, repository identifier or
+runtime hook for the observer.
+
+```text
+external observer may verify Malāk isolation
+Malāk must not know the observer identity
+```
+
+Detection grants no authority to modify Malāk automatically. Any correction
+still requires the normal human-reviewed Malāk workflow.
+
+## 3. Future repository operations
 
 A future Agent terminal may provide deterministic repository hygiene for the
 repositories under its operational responsibility.
@@ -47,7 +68,7 @@ Candidate capabilities:
 Command names remain placeholders until a dedicated implementation gate.
 No generic shell or arbitrary Git passthrough is allowed.
 
-## 3. Repository compare
+## 4. Repository compare
 
 The Agent should compare local and remote state and classify at least:
 
@@ -66,7 +87,7 @@ default branch, fetch/prune result and classification reason.
 
 Credentials and tokens must never appear in output, reports or evidence.
 
-## 4. Safe local synchronization
+## 5. Safe local synchronization
 
 The Agent may eventually reconcile only deterministic, non-destructive drift.
 
@@ -80,7 +101,7 @@ uncommitted changes or ambiguous identity.
 It must never hide drift through reset, forced checkout, force-push or
 discarding local changes. Every sync must produce before/after evidence.
 
-## 5. Branch inventory and investigation
+## 6. Branch inventory and investigation
 
 If a configured repository has additional branches, the Agent should report
 and investigate them instead of deleting them automatically.
@@ -106,7 +127,7 @@ SAFE_CLEANUP_CANDIDATE.
 
 A summary must explain the evidence behind the classification.
 
-## 6. Human filter before deletion
+## 7. Human filter before deletion
 
 This boundary is mandatory and non-negotiable.
 
@@ -122,7 +143,7 @@ repository identity, branch name, branch SHA, remote identity, default branch
 or verified merge/ancestry state changes. New evidence requires a new review
 and a new approval.
 
-## 7. Protected branches and forbidden operations
+## 8. Protected branches and forbidden operations
 
 Default branch, main, the current checked-out branch and configured protected
 branches are always ineligible for cleanup unless a future explicit governance
@@ -133,7 +154,7 @@ delete-all, normal use of forced branch deletion, force-push, implicit remote
 deletion, deletion inferred only from branch naming and destructive resolution
 of ambiguity.
 
-## 8. Audit and traceability
+## 9. Audit and traceability
 
 Each repository synchronization or branch cleanup run should produce a run id
 and retain:
@@ -157,7 +178,7 @@ The current evidence/report model may be reused through var/evidence/<run_id>
 and var/reports/<run_id>. Every future mutation must have a corresponding
 verification step.
 
-## 9. Pull Requests
+## 10. Pull Requests
 
 PR creation for controlled Vault proposals remains part of the Agent's current
 responsibility.
@@ -168,7 +189,7 @@ Owner may continue to merge from GitHub on desktop or mobile.
 The Agent may inspect PR state as evidence for branch investigation, but PR
 state observation never grants permission to delete.
 
-## 10. Current vs future authority
+## 11. Current vs future authority
 
 Current baseline permits observation, fetch, comparison, auditing, creation
 of controlled Vault proposal branches and opening Draft PRs. It does not permit
@@ -179,7 +200,7 @@ branch investigation and cleanup recommendation. Branch deletion may only be
 implemented as an execution of one exact Owner-approved operation.
 Automatic destructive cleanup remains forbidden.
 
-## 11. Implementation gate
+## 12. Implementation gate
 
 Before implementation, a dedicated G0/G1 must inventory existing Git inspector
 capabilities, define the exact repositories under management, define the safe
