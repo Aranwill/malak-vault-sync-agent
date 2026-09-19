@@ -86,6 +86,14 @@ Invariantes:
 
 Esta frontera es obligatoria para futuras ampliaciones del Agent.
 
+La ampliación futura de sincronización local, comparación de ramas, detección
+de drift e investigación/cleanup gobernado se registra en
+[docs/FUTURE_REPOSITORY_OPERATIONS.md](docs/FUTURE_REPOSITORY_OPERATIONS.md).
+
+El baseline actual no autoriza borrado de ramas. Cualquier futura eliminación
+debe pasar por investigación, informe, revisión y aprobación explícita del
+Owner.
+
 ## Repositorios observados
 
 | Rol | Repositorio | Rama | Acceso |
