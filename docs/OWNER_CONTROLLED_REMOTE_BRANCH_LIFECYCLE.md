@@ -226,8 +226,78 @@ La prioridad sigue siendo que el agente no omita fuentes relevantes y que el
 Vault permanezca actualizado, trazable y recuperable, sin ampliar autoridad
 operativa.
 
+## Capacidad futura pendiente — cleanup gobernado con aprobación del Owner
+
+El baseline actual **no autoriza** al Agent a borrar ramas. Esta sección sólo
+registra una capacidad futura para implementar más adelante.
+
+La evolución deseada es:
+
+```text
+detectar rama adicional
+        ↓
+investigar identidad + SHA + ancestry + PR + contenido
+        ↓
+clasificar
+        ↓
+generar resumen + evidencia
+        ↓
+STOP
+        ↓
+Owner revisa
+        ├── rechaza → no cambia nada
+        └── aprueba rama exacta + SHA exacto
+                  ↓
+          Agent ejecuta sólo ese cleanup
+                  ↓
+          verifica ausencia / estado final
+                  ↓
+          informe auditable
+```
+
+Invariantes futuros:
+
+- ninguna rama se borra automáticamente;
+- ninguna clasificación de "mergeada" concede autoridad;
+- ninguna rama creada por el Agent se considera propiedad destructiva del
+  Agent;
+- la aprobación debe identificar repositorio, rama, SHA y alcance
+  local/remoto;
+- una aprobación para una rama local no autoriza por sí sola borrar la remota;
+- si cambia el SHA después de la revisión, la aprobación expira;
+- `main`, la default branch, la rama actual y cualquier rama protegida son
+  inelegibles;
+- no se admiten wildcard, pattern delete, force-delete ni force-push;
+- ancestry ambigua, contenido exclusivo no resuelto o drift desconocido
+  producen STOP;
+- antes del cleanup debe quedar evidencia reproducible de que el contenido
+  relevante fue incorporado a `main` o, si la historia difiere, un informe
+  explícito para revisión humana.
+
+Estados de investigación candidatos:
+
+```text
+PROTECTED
+ACTIVE
+MERGED_VERIFIED
+CONTENT_INTEGRATED_HISTORY_DIFFERS
+STALE_UNMERGED
+DIVERGED
+UNKNOWN
+SAFE_CLEANUP_CANDIDATE
+```
+
+`SAFE_CLEANUP_CANDIDATE` significa únicamente "elegible para revisión".
+
+```text
+SAFE_CLEANUP_CANDIDATE != AUTHORIZED_TO_DELETE
+```
+
+La autorización destructiva permanece siempre en el Owner.
+
 ## Regla final
 
-> **Observar una rama no concede autoridad para eliminarla. Crear una rama no
-> concede autoridad para destruirla. La eliminación de ramas remotas pertenece
-> exclusivamente al Owner.**
+> **Observar o crear una rama no concede autoridad para eliminarla. En el
+> baseline actual el Agent no puede borrar ramas. Una futura capacidad de
+> cleanup sólo podrá ejecutar una eliminación exacta después de investigación,
+> evidencia y aprobación explícita del Owner.**
