@@ -50,6 +50,50 @@ El agente no puede:
 - utilizar LLM;
 - integrarse con el Kernel o runtime de Malāk.
 
+## Frontera externa respecto de Malāk
+
+El Sync Agent y el Project Vault son infraestructura auxiliar **externa** a
+Malāk. No forman parte de su arquitectura, runtime, memoria, knowledge,
+Kernel, capabilities ni contratos internos.
+
+La dirección permitida es exclusivamente:
+
+```text
+Malāk repository
+      ↓ observed externally
+Sync Agent
+      ↓ maintains
+Project Vault
+      ↓ supports
+assistant context
+```
+
+No existe dependencia inversa.
+
+Invariantes:
+
+- Malāk no importa, invoca ni consulta al Sync Agent;
+- Malāk no importa, invoca ni consulta al Project Vault;
+- el Project Vault no es memoria de Malāk;
+- el Project Vault no es una fuente de knowledge de Malāk;
+- el Sync Agent no es una capability, tool, agent interno ni componente del
+  runtime de Malāk;
+- ninguna función nueva del Sync Agent debe requerir cambios en Malāk para que
+  Malāk "conozca" al Agent o al Vault;
+- la observación del repositorio de Malāk es externa y unilateral;
+- cualquier mención histórica en artefactos de desarrollo/auditoría no
+  constituye dependencia arquitectónica ni autoridad vigente.
+
+Esta frontera es obligatoria para futuras ampliaciones del Agent.
+
+La ampliación futura de sincronización local, comparación de ramas, detección
+de drift e investigación/cleanup gobernado se registra en
+[docs/FUTURE_REPOSITORY_OPERATIONS.md](docs/FUTURE_REPOSITORY_OPERATIONS.md).
+
+El baseline actual no autoriza borrado de ramas. Cualquier futura eliminación
+debe pasar por investigación, informe, revisión y aprobación explícita del
+Owner.
+
 ## Repositorios observados
 
 | Rol | Repositorio | Rama | Acceso |
